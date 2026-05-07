@@ -289,6 +289,14 @@ void ApplicationContext::loadSettingsFromArgv () {
 	    this->settings.render.window.geometry.w = strtol (delim3 + 1, nullptr, 10);
 	})
 	.append ();
+    backgroundMode.add_argument ("--ipc-socket")
+	.help ("Listen for runtime control commands on this Unix socket path. "
+	       "Fire-and-forget protocol, newline-delimited commands. "
+	       "Supports: reposition, set_property.")
+	.default_value (std::string (""))
+	.action ([this] (const std::string& value) -> void {
+	    this->settings.general.ipcSocketPath = value;
+	});
     backgroundMode.add_argument ("-r", "--screen-root")
 	.help ("The screen the following settings will have an effect on")
 	.action ([this, &lastScreen] (const std::string& value) -> void {

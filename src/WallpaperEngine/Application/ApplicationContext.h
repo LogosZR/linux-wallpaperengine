@@ -81,6 +81,8 @@ public:
 	    std::map<std::string, PlaylistDefinition> screenPlaylists;
 	    /** Playlist used in window mode */
 	    std::optional<PlaylistDefinition> defaultPlaylist;
+	    /** Unix socket path for runtime IPC control. Empty = disabled. */
+	    std::string ipcSocketPath;
 	} general;
 
 	/**
@@ -159,6 +161,7 @@ public:
             .screenClamps = {},
             .screenPlaylists = {},
             .defaultPlaylist = std::nullopt,
+            .ipcSocketPath = "",
         },
         .render = {
             .mode = NORMAL_WINDOW,
