@@ -23,6 +23,8 @@
 
 namespace WallpaperEngine::Application {
 
+class IPCServer;
+
 using namespace WallpaperEngine::Assets;
 using namespace WallpaperEngine::Data::Model;
 /**
@@ -79,6 +81,18 @@ public:
      * Gets the currently set destination framebuffer for rendering. If not set, returns 0 (the default framebuffer).
      */
     [[nodiscard]] GLuint getDestinationFramebuffer () const;
+
+    /**
+     * Handle IPC reposition command. Routes to the video driver's resizeWindow.
+     * No-op if not in EXPLICIT_WINDOW mode.
+     */
+    void ipcReposition (glm::ivec4 geometry);
+
+    /**
+     * Handle IPC set_property command. Looks up the property by key on each
+     * running project and calls update(value). Logs and ignores unknown keys.
+     */
+    void ipcSetProperty (const std::string& key, const std::string& value);
 
 private:
     /**
@@ -169,6 +183,7 @@ private:
     std::unique_ptr<WallpaperEngine::Render::Drivers::VideoDriver> m_videoDriver = nullptr;
     std::unique_ptr<WallpaperEngine::Render::Drivers::Detectors::FullScreenDetector> m_fullScreenDetector = nullptr;
     std::unique_ptr<WallpaperEngine::WebBrowser::WebBrowserContext> m_browserContext = nullptr;
+    std::unique_ptr<IPCServer> m_ipcServer = nullptr;
     std::mt19937 m_playlistRng { std::random_device {}() };
     bool m_isPaused = false;
     bool m_screenShotTaken = false;

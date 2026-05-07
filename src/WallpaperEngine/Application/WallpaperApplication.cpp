@@ -1,5 +1,6 @@
 #include "WallpaperApplication.h"
 
+#include "IPCServer.h"
 #include "Steam/FileSystem/FileSystem.h"
 #include "WallpaperEngine/Application/ApplicationState.h"
 #include "WallpaperEngine/Assets/AssetLoadException.h"
@@ -491,6 +492,32 @@ void WallpaperApplication::setupProperties () {
     }
 }
 
+void WallpaperApplication::ipcReposition (glm::ivec4 geometry) {
+    if (this->m_context.settings.render.mode
+        != ApplicationContext::EXPLICIT_WINDOW) {
+	sLog.error ("ipcReposition ignored: not in EXPLICIT_WINDOW mode");
+	return;
+    }
+    this->m_context.settings.render.window.geometry = geometry;
+    this->m_videoDriver->resizeWindow (geometry);
+}
+
+void WallpaperApplication::ipcSetProperty (
+    const std::string& key, const std::string& value
+) {
+    bool found = false;
+    for (const auto& [name, info] : this->m_backgrounds) {
+	auto it = info->properties.find (key);
+	if (it != info->properties.end ()) {
+	    it->second->update (value);
+	    found = true;
+	}
+    }
+    if (!found) {
+	sLog.error ("ipcSetProperty: unknown key: ", key);
+    }
+}
+
 void WallpaperApplication::setupBrowser () {
     bool anyWebProject = std::any_of (
 	this->m_backgrounds.begin (), this->m_backgrounds.end (),
@@ -725,6 +752,12 @@ void WallpaperApplication::setup () {
     this->prepareOutputs ();
     this->setupOpenGLDebugging ();
 
+    if (!this->m_context.settings.general.ipcSocketPath.empty ()) {
+	this->m_ipcServer = std::make_unique<IPCServer> (
+	    this->m_context.settings.general.ipcSocketPath, *this
+	);
+    }
+
     if (this->m_context.settings.general.dumpStructure) {
 	auto prettyPrinter = Data::Dumpers::StringPrinter ();
 
@@ -859,6 +892,7 @@ void WallpaperApplication::cleanup () {
 void WallpaperApplication::show () {
 	setup();
     while (this->m_context.state.general.keepRunning) {
+		if (this->m_ipcServer) this->m_ipcServer->poll ();
 		render();
     }
     cleanup();
