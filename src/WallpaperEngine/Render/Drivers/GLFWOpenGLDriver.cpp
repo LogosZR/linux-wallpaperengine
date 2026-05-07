@@ -21,6 +21,12 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
     VideoDriver (app, m_mouseInput), m_context (context), m_mouseInput (*this) {
     glfwSetErrorCallback (CustomGLFWErrorHandler);
 
+    // Force X11 backend. On Wayland, glfwSetWindowPos is unsupported (the
+    // protocol gives clients no say over window position), which breaks
+    // --ipc-socket reposition and the initial --window XxYxWxH placement.
+    // XWayland honors both.
+    glfwInitHint (GLFW_PLATFORM, GLFW_PLATFORM_X11);
+
     // initialize glfw
     if (glfwInit () == GLFW_FALSE) {
 	sLog.exception ("Failed to initialize glfw");
