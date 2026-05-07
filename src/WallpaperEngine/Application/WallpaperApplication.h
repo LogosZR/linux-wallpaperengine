@@ -33,6 +33,7 @@ using namespace WallpaperEngine::Data::Model;
 class WallpaperApplication {
 public:
     explicit WallpaperApplication (ApplicationContext& context);
+    ~WallpaperApplication ();
 
     /**
      * Prepares the application for rendering.
@@ -183,7 +184,7 @@ private:
     std::unique_ptr<WallpaperEngine::Render::Drivers::VideoDriver> m_videoDriver = nullptr;
     std::unique_ptr<WallpaperEngine::Render::Drivers::Detectors::FullScreenDetector> m_fullScreenDetector = nullptr;
     std::unique_ptr<WallpaperEngine::WebBrowser::WebBrowserContext> m_browserContext = nullptr;
-    std::unique_ptr<IPCServer> m_ipcServer = nullptr;
+    std::unique_ptr<IPCServer> m_ipcServer;
     std::mt19937 m_playlistRng { std::random_device {}() };
     bool m_isPaused = false;
     bool m_screenShotTaken = false;

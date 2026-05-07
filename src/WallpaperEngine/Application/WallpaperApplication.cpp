@@ -67,6 +67,8 @@ WallpaperApplication::WallpaperApplication (ApplicationContext& context) : m_con
     this->initializePlaylists ();
 }
 
+WallpaperApplication::~WallpaperApplication () = default;
+
 AssetLocatorUniquePtr WallpaperApplication::setupAssetLocator (const std::string& bg) const {
     auto container = std::make_unique<Container> ();
 
