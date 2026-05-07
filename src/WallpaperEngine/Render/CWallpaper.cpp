@@ -1,4 +1,5 @@
 #include "CWallpaper.h"
+#include "WallpaperEngine/Application/WallpaperApplication.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 #include "WallpaperEngine/Render/Wallpapers/CVideo.h"
@@ -246,12 +247,28 @@ void CWallpaper::setPause (bool newState) { }
 void CWallpaper::setupFramebuffers () {
     const uint32_t width = this->getWidth ();
     const uint32_t height = this->getHeight ();
-    const uint32_t clamp = this->m_state.getClampingMode ();
+    uint32_t clamp = this->m_state.getClampingMode ();
+
+    // In transparent-framebuffer mode, force CLAMP_TO_BORDER so UVs outside
+    // [0,1] (the letterbox/pillarbox area under fit scaling) sample the
+    // border color instead of the opaque edge texel. The border color
+    // defaults to (0,0,0,0); we set it explicitly below to be safe.
+    const bool transparent =
+	this->getContext ().getApp ().getContext ().settings.general.windowTransparent;
+    if (transparent) {
+	clamp = TextureFlags_ClampUVsBorder;
+    }
 
     // create framebuffer for the scene
     this->m_sceneFBO = this->create (
 	"_rt_FullFrameBuffer", TextureFormat_ARGB8888, clamp, 1.0, { width, height }, { width, height }
     );
+
+    if (transparent) {
+	constexpr GLfloat transparentBorder[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	glBindTexture (GL_TEXTURE_2D, this->m_sceneFBO->getTextureID (0));
+	glTexParameterfv (GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, transparentBorder);
+    }
 
     this->alias ("_rt_MipMappedFrameBuffer", "_rt_FullFrameBuffer");
 }
