@@ -49,6 +49,13 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
 	glfwWindowHint (GLFW_FLOATING, GLFW_TRUE);
     }
 
+    // Transparent framebuffer — caller (e.g. Kuro's Jumbo blur-backdrop mode)
+    // wants the letterbox/pillarbox area to show the compositor-painted
+    // background through the window instead of lwe's clear color.
+    if (context.settings.general.windowTransparent) {
+	glfwWindowHint (GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
+    }
+
 #if !NDEBUG
     glfwWindowHint (GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE);
 #endif /* DEBUG */

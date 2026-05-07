@@ -56,10 +56,14 @@ CScene::CScene (
     );
     this->alias ("_alias_lightCookie", "_rt_shadowAtlas");
 
-    // set clear color
+    // set clear color. Alpha is 0 when the caller requested a transparent
+    // framebuffer (e.g. Kuro's blur-backdrop mode) so letterbox/pillarbox
+    // areas reveal what's behind the window instead of lwe's clear color.
     const glm::vec3 clearColor = scene->colors.clear->value->getVec3 ();
+    const float clearAlpha =
+	this->getContext ().getApp ().getContext ().settings.general.windowTransparent ? 0.0f : 1.0f;
 
-    glClearColor (clearColor.r, clearColor.g, clearColor.b, 1.0f);
+    glClearColor (clearColor.r, clearColor.g, clearColor.b, clearAlpha);
 
     // create all objects based off their dependencies
     for (const auto& object : scene->objects) {

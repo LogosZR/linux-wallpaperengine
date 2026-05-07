@@ -297,6 +297,15 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.action ([this] (const std::string& value) -> void {
 	    this->settings.general.ipcSocketPath = value;
 	});
+    backgroundMode.add_argument ("--window-transparent")
+	.help ("Use a transparent framebuffer and clear with alpha=0. Lets the "
+	       "compositor show whatever's behind the window in areas the "
+	       "wallpaper doesn't cover (letterbox/pillarbox under fit scaling).")
+	.default_value (false)
+	.implicit_value (true)
+	.action ([this] (const std::string&) -> void {
+	    this->settings.general.windowTransparent = true;
+	});
     backgroundMode.add_argument ("-r", "--screen-root")
 	.help ("The screen the following settings will have an effect on")
 	.action ([this, &lastScreen] (const std::string& value) -> void {

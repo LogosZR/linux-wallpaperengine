@@ -83,6 +83,10 @@ public:
 	    std::optional<PlaylistDefinition> defaultPlaylist;
 	    /** Unix socket path for runtime IPC control. Empty = disabled. */
 	    std::string ipcSocketPath;
+	    /** Use a transparent framebuffer + alpha=0 clear. Lets the
+	     *  compositor show whatever's behind the window in areas the
+	     *  wallpaper doesn't cover (letterbox/pillarbox under fit scaling). */
+	    bool windowTransparent;
 	} general;
 
 	/**
@@ -162,6 +166,7 @@ public:
             .screenPlaylists = {},
             .defaultPlaylist = std::nullopt,
             .ipcSocketPath = "",
+            .windowTransparent = false,
         },
         .render = {
             .mode = NORMAL_WINDOW,
