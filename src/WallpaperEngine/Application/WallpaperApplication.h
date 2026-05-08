@@ -112,6 +112,16 @@ public:
     bool ipcSamplePixel (int x, int y, std::string& outHex);
 
     /**
+     * Handle IPC sample_region request. Reads a (w x h) block starting
+     * at (x, y) in window coords (top-left origin) and writes space-
+     * separated "#rrggbb" values in row-major order (top row first,
+     * left to right) into `outHex`. Pixels outside the framebuffer are
+     * reported as #000000 so clients always get w*h values. Caps w and
+     * h at 64. Returns false on GL error or missing video driver.
+     */
+    bool ipcSampleRegion (int x, int y, int w, int h, std::string& outHex);
+
+    /**
      * Handle IPC start/stop_eyedropper commands. When active, the main
      * loop emits !cursor / !click events each frame whenever the mouse
      * moves inside the window or left-click is pressed.

@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <sstream>
+#include <vector>
 
 #include "IPCServer.h"
 #include "Steam/FileSystem/FileSystem.h"
@@ -556,6 +557,66 @@ bool WallpaperApplication::ipcSamplePixel (int x, int y, std::string& outHex) {
     char buf[8];
     std::snprintf (buf, sizeof (buf), "#%02x%02x%02x", rgb[0], rgb[1], rgb[2]);
     outHex = buf;
+    return true;
+}
+
+bool WallpaperApplication::ipcSampleRegion (int x, int y, int w, int h, std::string& outHex) {
+    if (!this->m_videoDriver) return false;
+    // Cap block size to bound payload; 64*64*8 chars is about 32KB, fine over
+    // a unix socket but we never actually need more than ~16x16 for a loupe.
+    if (w < 1 || h < 1 || w > 64 || h > 64) return false;
+
+    const glm::ivec2 fbSize = this->m_videoDriver->getFramebufferSize ();
+
+    // Clamp the requested rect to the framebuffer. We read whatever falls
+    // inside, then pad out-of-bounds cells with #000000 so the caller
+    // always gets exactly w*h values.
+    const int clampedX = std::max (0, x);
+    const int clampedY = std::max (0, y);
+    const int clampedRight = std::min (fbSize.x, x + w);
+    const int clampedBottom = std::min (fbSize.y, y + h);
+    const int clampedW = std::max (0, clampedRight - clampedX);
+    const int clampedH = std::max (0, clampedBottom - clampedY);
+
+    std::vector<unsigned char> pixels (static_cast<size_t> (clampedW) * clampedH * 3, 0);
+    if (clampedW > 0 && clampedH > 0) {
+	// glReadPixels origin is bottom-left; convert the rect's top window
+	// coord to GL coord for its bottom row.
+	const int glY = fbSize.y - clampedBottom;
+	glBindFramebuffer (GL_FRAMEBUFFER, 0);
+	glPixelStorei (GL_PACK_ALIGNMENT, 1);
+	glReadPixels (clampedX, glY, clampedW, clampedH, GL_RGB, GL_UNSIGNED_BYTE, pixels.data ());
+	const GLenum err = glGetError ();
+	if (err != GL_NO_ERROR) {
+	    sLog.error ("ipcSampleRegion: glReadPixels error: ", err);
+	    return false;
+	}
+    }
+
+    // glReadPixels returns rows bottom-to-top; we want top-to-bottom so the
+    // hex string matches the window's visible orientation.
+    outHex.clear ();
+    outHex.reserve (static_cast<size_t> (w) * h * 8);
+    for (int row = 0; row < h; ++row) {
+	for (int col = 0; col < w; ++col) {
+	    const int wx = x + col;
+	    const int wy = y + row;
+	    char buf[9];
+	    if (wx < clampedX || wx >= clampedRight || wy < clampedY || wy >= clampedBottom) {
+		std::snprintf (buf, sizeof (buf), "#000000");
+	    } else {
+		// pixels[] is indexed by (glRow, col) where glRow 0 is the
+		// bottom of the clamped block.
+		const int localCol = wx - clampedX;
+		const int localRow = wy - clampedY;
+		const int glRow = clampedH - 1 - localRow;
+		const size_t off = static_cast<size_t> (glRow) * clampedW * 3 + static_cast<size_t> (localCol) * 3;
+		std::snprintf (buf, sizeof (buf), "#%02x%02x%02x", pixels[off], pixels[off + 1], pixels[off + 2]);
+	    }
+	    if (!outHex.empty ()) outHex += ' ';
+	    outHex += buf;
+	}
+    }
     return true;
 }
 

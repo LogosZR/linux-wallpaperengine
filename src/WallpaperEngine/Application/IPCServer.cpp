@@ -173,6 +173,19 @@ void IPCServer::handleRequest (uint64_t id, const std::string& cmd, const std::s
 		} else {
 			writeResponse (id, false, "sample failed");
 		}
+	} else if (cmd == "sample_region") {
+		std::istringstream iss (rest);
+		int x, y, w, h;
+		if (!(iss >> x >> y >> w >> h)) {
+			writeResponse (id, false, "expected: sample_region <x> <y> <w> <h>");
+			return;
+		}
+		std::string hex;
+		if (m_app.ipcSampleRegion (x, y, w, h, hex)) {
+			writeResponse (id, true, hex);
+		} else {
+			writeResponse (id, false, "sample failed");
+		}
 	} else {
 		writeResponse (id, false, "unknown command: " + cmd);
 	}
