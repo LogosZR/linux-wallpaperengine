@@ -1,5 +1,8 @@
 #include "WallpaperApplication.h"
 
+#include <cstdio>
+#include <sstream>
+
 #include "IPCServer.h"
 #include "Steam/FileSystem/FileSystem.h"
 #include "WallpaperEngine/Application/ApplicationState.h"
@@ -533,6 +536,75 @@ bool WallpaperApplication::ipcSetBackgroundMode (const std::string& value) {
     return true;
 }
 
+bool WallpaperApplication::ipcSamplePixel (int x, int y, std::string& outHex) {
+    if (!this->m_videoDriver) return false;
+    const glm::ivec2 fbSize = this->m_videoDriver->getFramebufferSize ();
+    if (x < 0 || y < 0 || x >= fbSize.x || y >= fbSize.y) return false;
+
+    // glReadPixels uses OpenGL coords (Y=0 at bottom); flip from window coords
+    // (Y=0 at top) that the IPC client natively thinks in.
+    const int glY = fbSize.y - 1 - y;
+    unsigned char rgb[3] = {0, 0, 0};
+    glBindFramebuffer (GL_FRAMEBUFFER, 0);
+    glReadPixels (x, glY, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+    const GLenum err = glGetError ();
+    if (err != GL_NO_ERROR) {
+	sLog.error ("ipcSamplePixel: glReadPixels error: ", err);
+	return false;
+    }
+
+    char buf[8];
+    std::snprintf (buf, sizeof (buf), "#%02x%02x%02x", rgb[0], rgb[1], rgb[2]);
+    outHex = buf;
+    return true;
+}
+
+void WallpaperApplication::ipcSetEyedropperActive (bool active) {
+    this->m_eyedropperActive = active;
+    this->m_lastEyedropperPos = { -1, -1 };
+    this->m_lastEyedropperClick = 0;
+}
+
+void WallpaperApplication::pollEyedropper () {
+    if (!this->m_eyedropperActive || !this->m_ipcServer || !this->m_videoDriver) return;
+
+    // Pull current mouse position + click state from the input context.
+    // Position is in framebuffer-space with Y=0 at the bottom (see
+    // GLFWMouseInput::update).
+    const auto& mouse = this->m_videoDriver->getInputContext ().getMouseInput ();
+    const glm::dvec2 rawPos = mouse.position ();
+    const glm::ivec2 fbSize = this->m_videoDriver->getFramebufferSize ();
+    const int fx = static_cast<int> (rawPos.x);
+    const int fy = fbSize.y - 1 - static_cast<int> (rawPos.y); // convert back to window coords
+    const glm::ivec2 winPos { fx, fy };
+
+    const bool inBounds =
+	fx >= 0 && fy >= 0 && fx < fbSize.x && fy < fbSize.y;
+
+    // Cursor event — only when the position changes (and is in bounds).
+    if (inBounds && winPos != this->m_lastEyedropperPos) {
+	std::string hex;
+	if (this->ipcSamplePixel (fx, fy, hex)) {
+	    std::ostringstream data;
+	    data << fx << ' ' << fy << ' ' << hex;
+	    this->m_ipcServer->emitEvent ("cursor", data.str ());
+	}
+	this->m_lastEyedropperPos = winPos;
+    }
+
+    // Click event — rising edge on left-click.
+    const int click = mouse.leftClick () == WallpaperEngine::Input::MouseClickStatus::Clicked ? 1 : 0;
+    if (click && !this->m_lastEyedropperClick && inBounds) {
+	std::string hex;
+	if (this->ipcSamplePixel (fx, fy, hex)) {
+	    std::ostringstream data;
+	    data << fx << ' ' << fy << ' ' << hex;
+	    this->m_ipcServer->emitEvent ("click", data.str ());
+	}
+    }
+    this->m_lastEyedropperClick = click;
+}
+
 void WallpaperApplication::setupBrowser () {
     bool anyWebProject = std::any_of (
 	this->m_backgrounds.begin (), this->m_backgrounds.end (),
@@ -908,6 +980,7 @@ void WallpaperApplication::show () {
 	setup();
     while (this->m_context.state.general.keepRunning) {
 		if (this->m_ipcServer) this->m_ipcServer->poll ();
+		this->pollEyedropper ();
 		render();
     }
     cleanup();

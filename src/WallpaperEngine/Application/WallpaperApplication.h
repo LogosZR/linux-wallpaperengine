@@ -103,6 +103,29 @@ public:
      */
     bool ipcSetBackgroundMode (const std::string& value);
 
+    /**
+     * Handle IPC sample_pixel request. Reads one pixel from the default
+     * framebuffer at (x, y) in window coords (top-left origin) and writes
+     * "#rrggbb" into `outHex`. Returns false on failure (out of bounds,
+     * GL error, no active video driver).
+     */
+    bool ipcSamplePixel (int x, int y, std::string& outHex);
+
+    /**
+     * Handle IPC start/stop_eyedropper commands. When active, the main
+     * loop emits !cursor / !click events each frame whenever the mouse
+     * moves inside the window or left-click is pressed.
+     */
+    void ipcSetEyedropperActive (bool active);
+
+    /**
+     * Invoked each frame from the main loop while eyedropper mode is
+     * active. Queries the current mouse position + left-click state and
+     * pushes !cursor x y #rrggbb / !click x y #rrggbb events over the
+     * IPC socket when they change or fire.
+     */
+    void pollEyedropper ();
+
 private:
     /**
      * Sets up an asset locator for the given background
@@ -193,6 +216,12 @@ private:
     std::unique_ptr<WallpaperEngine::Render::Drivers::Detectors::FullScreenDetector> m_fullScreenDetector = nullptr;
     std::unique_ptr<WallpaperEngine::WebBrowser::WebBrowserContext> m_browserContext = nullptr;
     std::unique_ptr<IPCServer> m_ipcServer;
+    // Eyedropper mode — while active, pollEyedropper() runs each frame
+    // and streams !cursor / !click events. State cached here so we don't
+    // spam identical cursor events on still frames.
+    bool m_eyedropperActive = false;
+    glm::ivec2 m_lastEyedropperPos = { -1, -1 };
+    int m_lastEyedropperClick = 0;
     std::mt19937 m_playlistRng { std::random_device {}() };
     bool m_isPaused = false;
     bool m_screenShotTaken = false;

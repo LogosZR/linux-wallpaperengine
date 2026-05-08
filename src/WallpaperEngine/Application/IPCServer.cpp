@@ -102,6 +102,23 @@ void IPCServer::readClient () {
 }
 
 void IPCServer::handleLine (const std::string& line) {
+	// Request with id: "#<id> <cmd> [args]"
+	if (!line.empty () && line.front () == '#') {
+		std::istringstream iss (line.substr (1));
+		uint64_t id = 0;
+		std::string cmd;
+		if (!(iss >> id >> cmd)) {
+			sLog.error ("IPCServer: malformed request (expected #<id> <cmd>): ", line);
+			return;
+		}
+		std::string rest;
+		std::getline (iss, rest);
+		if (!rest.empty () && rest.front () == ' ') rest.erase (0, 1);
+		handleRequest (id, cmd, rest);
+		return;
+	}
+
+	// Fire-and-forget command, no response.
 	std::istringstream iss (line);
 	std::string cmd;
 	iss >> cmd;
@@ -116,7 +133,6 @@ void IPCServer::handleLine (const std::string& line) {
 	} else if (cmd == "set_property") {
 		std::string key;
 		iss >> key;
-		// Rest of line (trimmed of leading whitespace) is the value.
 		std::string value;
 		std::getline (iss, value);
 		if (!value.empty () && value.front () == ' ') value.erase (0, 1);
@@ -126,8 +142,6 @@ void IPCServer::handleLine (const std::string& line) {
 			m_app.ipcSetProperty (key, value);
 		}
 	} else if (cmd == "set_background_mode") {
-		// Rest of the line is the mode string (e.g. "none", "blur",
-		// "color=#aabbcc"). Strip the leading space istringstream leaves.
 		std::string value;
 		std::getline (iss, value);
 		if (!value.empty () && value.front () == ' ') value.erase (0, 1);
@@ -136,8 +150,60 @@ void IPCServer::handleLine (const std::string& line) {
 		} else {
 			m_app.ipcSetBackgroundMode (value);
 		}
+	} else if (cmd == "start_eyedropper") {
+		m_app.ipcSetEyedropperActive (true);
+	} else if (cmd == "stop_eyedropper") {
+		m_app.ipcSetEyedropperActive (false);
 	} else {
 		sLog.error ("IPCServer: unknown command: ", cmd);
+	}
+}
+
+void IPCServer::handleRequest (uint64_t id, const std::string& cmd, const std::string& rest) {
+	if (cmd == "sample_pixel") {
+		std::istringstream iss (rest);
+		int x, y;
+		if (!(iss >> x >> y)) {
+			writeResponse (id, false, "expected: sample_pixel <x> <y>");
+			return;
+		}
+		std::string hex;
+		if (m_app.ipcSamplePixel (x, y, hex)) {
+			writeResponse (id, true, hex);
+		} else {
+			writeResponse (id, false, "sample failed");
+		}
+	} else {
+		writeResponse (id, false, "unknown command: " + cmd);
+	}
+}
+
+void IPCServer::writeResponse (uint64_t id, bool ok, const std::string& data) {
+	std::ostringstream line;
+	line << '#' << id << ' ' << (ok ? "ok" : "err");
+	if (!data.empty ()) line << ' ' << data;
+	line << '\n';
+	writeLine (line.str ());
+}
+
+void IPCServer::emitEvent (const std::string& type, const std::string& data) {
+	if (m_clientFd < 0) return;
+	std::ostringstream line;
+	line << '!' << type;
+	if (!data.empty ()) line << ' ' << data;
+	line << '\n';
+	writeLine (line.str ());
+}
+
+void IPCServer::writeLine (const std::string& line) {
+	if (m_clientFd < 0) return;
+	const ssize_t n = ::write (m_clientFd, line.data (), line.size ());
+	if (n < 0) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EPIPE) {
+			sLog.error ("IPCServer: write failed: ", strerror (errno));
+		}
+		// EPIPE / any error: client is gone; drop it so accept reopens.
+		if (errno == EPIPE) closeClient ();
 	}
 }
 
