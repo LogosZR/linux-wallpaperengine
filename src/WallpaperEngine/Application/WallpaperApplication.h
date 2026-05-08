@@ -95,6 +95,14 @@ public:
      */
     void ipcSetProperty (const std::string& key, const std::string& value);
 
+    /**
+     * Handle IPC set_background_mode command. Parses the same syntax as
+     * --background-mode and swaps settings.general.backgroundMode. Kicks
+     * off or tears down the backdrop-blur pipeline if transitioning to or
+     * from Blur mode. Returns true on success, false on invalid input.
+     */
+    bool ipcSetBackgroundMode (const std::string& value);
+
 private:
     /**
      * Sets up an asset locator for the given background

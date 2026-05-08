@@ -290,10 +290,11 @@ void CWallpaper::setupFramebuffers () {
 
     this->alias ("_rt_MipMappedFrameBuffer", "_rt_FullFrameBuffer");
 
-    if (this->getContext ().getApp ().getContext ().settings.general.backgroundMode.kind
-	== Application::ApplicationContext::BackgroundMode::Blur) {
-	this->setupBackdropBlur ();
-    }
+    // Always allocate the backdrop-blur pipeline so IPC can switch to Blur
+    // mode at runtime without reinitializing GL state mid-frame. Costs a
+    // few MB of FBOs that go unused under non-Blur modes; worth it for a
+    // branch-free live-tweak path.
+    this->setupBackdropBlur ();
 }
 
 void CWallpaper::setupBackdropBlur () {

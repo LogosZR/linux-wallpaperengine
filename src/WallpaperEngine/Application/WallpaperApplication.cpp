@@ -520,6 +520,19 @@ void WallpaperApplication::ipcSetProperty (
     }
 }
 
+bool WallpaperApplication::ipcSetBackgroundMode (const std::string& value) {
+    auto parsed = ApplicationContext::BackgroundMode::parse (value);
+    if (!parsed.has_value ()) {
+	sLog.error ("ipcSetBackgroundMode: invalid mode: ", value);
+	return false;
+    }
+    // The render loop reads settings.general.backgroundMode each frame so
+    // the next render picks up the new value automatically. The backdrop-
+    // blur pipeline was allocated at setup time for this exact reason.
+    this->m_context.settings.general.backgroundMode = *parsed;
+    return true;
+}
+
 void WallpaperApplication::setupBrowser () {
     bool anyWebProject = std::any_of (
 	this->m_backgrounds.begin (), this->m_backgrounds.end (),

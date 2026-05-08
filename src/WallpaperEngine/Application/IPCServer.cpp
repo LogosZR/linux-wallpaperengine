@@ -125,6 +125,17 @@ void IPCServer::handleLine (const std::string& line) {
 		} else {
 			m_app.ipcSetProperty (key, value);
 		}
+	} else if (cmd == "set_background_mode") {
+		// Rest of the line is the mode string (e.g. "none", "blur",
+		// "color=#aabbcc"). Strip the leading space istringstream leaves.
+		std::string value;
+		std::getline (iss, value);
+		if (!value.empty () && value.front () == ' ') value.erase (0, 1);
+		if (value.empty ()) {
+			sLog.error ("IPCServer: set_background_mode missing mode: ", line);
+		} else {
+			m_app.ipcSetBackgroundMode (value);
+		}
 	} else {
 		sLog.error ("IPCServer: unknown command: ", cmd);
 	}

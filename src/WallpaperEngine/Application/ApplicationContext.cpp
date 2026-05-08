@@ -19,6 +19,37 @@
 using namespace WallpaperEngine::Application;
 using WallpaperEngine::Data::JSON::JSON;
 
+std::optional<ApplicationContext::BackgroundMode> ApplicationContext::BackgroundMode::parse (
+    const std::string& value
+) {
+    if (value == "none") {
+	return BackgroundMode { .kind = None };
+    }
+    if (value == "blur") {
+	return BackgroundMode { .kind = Blur };
+    }
+    if (value.rfind ("color=", 0) == 0) {
+	std::string hex = value.substr (6);
+	if (!hex.empty () && hex.front () == '#') hex.erase (0, 1);
+	if (hex.size () != 6) return std::nullopt;
+
+	auto parseByte = [&] (size_t offset, bool& ok) -> float {
+	    char* end = nullptr;
+	    const unsigned long byte = strtoul (std::string (hex.c_str () + offset, 2).c_str (), &end, 16);
+	    if (end == nullptr || *end != '\0') ok = false;
+	    return static_cast<float> (byte) / 255.0f;
+	};
+	bool ok = true;
+	const float r = parseByte (0, ok);
+	const float g = parseByte (2, ok);
+	const float b = parseByte (4, ok);
+	if (!ok) return std::nullopt;
+
+	return BackgroundMode { .kind = Color, .color = { r, g, b } };
+    }
+    return std::nullopt;
+}
+
 std::filesystem::path ApplicationContext::resolvePlaylistItemPath (const std::string& raw) const {
     if (raw.empty ()) {
 	return {};
@@ -304,36 +335,11 @@ void ApplicationContext::loadSettingsFromArgv () {
 	       "copy of the scene behind the fit rect.")
 	.default_value (std::string ("none"))
 	.action ([this] (const std::string& value) -> void {
-	    if (value == "none") {
-		this->settings.general.backgroundMode.kind = BackgroundMode::None;
-		return;
+	    auto parsed = BackgroundMode::parse (value);
+	    if (!parsed.has_value ()) {
+		sLog.exception ("Invalid --background-mode: ", value);
 	    }
-	    if (value == "blur") {
-		this->settings.general.backgroundMode.kind = BackgroundMode::Blur;
-		return;
-	    }
-	    if (value.rfind ("color=", 0) == 0) {
-		std::string hex = value.substr (6);
-		if (!hex.empty () && hex.front () == '#') hex.erase (0, 1);
-		if (hex.size () != 6) {
-		    sLog.exception ("Invalid --background-mode color (expected #RRGGBB): ", value);
-		}
-		auto parseByte = [&] (size_t offset) {
-		    const char* p = hex.c_str () + offset;
-		    char* end = nullptr;
-		    const unsigned long byte = strtoul (std::string (p, 2).c_str (), &end, 16);
-		    if (end == nullptr || *end != '\0') {
-			sLog.exception ("Invalid --background-mode color (non-hex): ", value);
-		    }
-		    return static_cast<float> (byte) / 255.0f;
-		};
-		this->settings.general.backgroundMode.kind = BackgroundMode::Color;
-		this->settings.general.backgroundMode.color = {
-		    parseByte (0), parseByte (2), parseByte (4)
-		};
-		return;
-	    }
-	    sLog.exception ("Unknown --background-mode: ", value);
+	    this->settings.general.backgroundMode = *parsed;
 	});
     backgroundMode.add_argument ("-r", "--screen-root")
 	.help ("The screen the following settings will have an effect on")
