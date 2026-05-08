@@ -107,13 +107,22 @@ void CWallpaper::setupShaders () {
     // reserve shaders in OpenGL
     const GLuint fragmentShaderID = glCreateShader (GL_FRAGMENT_SHADER);
 
-    // give shader's source code to OpenGL to be compiled
+    // give shader's source code to OpenGL to be compiled. When the caller
+    // sets a non-default background mode (e.g. --background-mode color=#…),
+    // discard fragments whose UVs fall outside [0,1] so the pillarbox
+    // keeps whatever the default framebuffer was cleared to, instead of
+    // the opaque edge-clamped scene pixel.
     sourcePointer = "#version 330\n"
 		    "precision highp float;\n"
 		    "uniform sampler2D g_Texture0;\n"
+		    "uniform bool g_DiscardOutside;\n"
 		    "in vec2 v_TexCoord;\n"
 		    "out vec4 out_FragColor;\n"
 		    "void main () {\n"
+		    "if (g_DiscardOutside) {\n"
+		    "  if (v_TexCoord.x < 0.0 || v_TexCoord.x > 1.0\n"
+		    "      || v_TexCoord.y < 0.0 || v_TexCoord.y > 1.0) discard;\n"
+		    "}\n"
 		    "out_FragColor = texture (g_Texture0, v_TexCoord);\n"
 		    "}";
 
@@ -177,6 +186,7 @@ void CWallpaper::setupShaders () {
 
     // get textures
     this->g_Texture0 = glGetUniformLocation (this->m_shader, "g_Texture0");
+    this->g_DiscardOutside = glGetUniformLocation (this->m_shader, "g_DiscardOutside");
     this->a_Position = glGetAttribLocation (this->m_shader, "a_Position");
     this->a_TexCoord = glGetAttribLocation (this->m_shader, "a_TexCoord");
 }
@@ -233,6 +243,13 @@ void CWallpaper::render (const glm::ivec4& viewport, const bool vflip) {
     glVertexAttribPointer (this->a_Position, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
 
     glUniform1i (this->g_Texture0, 0);
+    // Tell the blit shader to discard pillarbox/letterbox fragments when a
+    // non-default background mode is active, so the default framebuffer's
+    // pre-painted background (e.g. cleared to --background-mode color) shows
+    // through instead of the opaque edge-clamped scene pixel.
+    const auto& bgMode =
+	this->getContext ().getApp ().getContext ().settings.general.backgroundMode;
+    glUniform1i (this->g_DiscardOutside, bgMode.kind != Application::ApplicationContext::BackgroundMode::None);
     // write the framebuffer as is to the screen
     glBindBuffer (GL_ARRAY_BUFFER, this->m_texCoordBuffer);
     glDrawArrays (GL_TRIANGLES, 0, 6);
@@ -247,28 +264,12 @@ void CWallpaper::setPause (bool newState) { }
 void CWallpaper::setupFramebuffers () {
     const uint32_t width = this->getWidth ();
     const uint32_t height = this->getHeight ();
-    uint32_t clamp = this->m_state.getClampingMode ();
-
-    // In transparent-framebuffer mode, force CLAMP_TO_BORDER so UVs outside
-    // [0,1] (the letterbox/pillarbox area under fit scaling) sample the
-    // border color instead of the opaque edge texel. The border color
-    // defaults to (0,0,0,0); we set it explicitly below to be safe.
-    const bool transparent =
-	this->getContext ().getApp ().getContext ().settings.general.windowTransparent;
-    if (transparent) {
-	clamp = TextureFlags_ClampUVsBorder;
-    }
+    const uint32_t clamp = this->m_state.getClampingMode ();
 
     // create framebuffer for the scene
     this->m_sceneFBO = this->create (
 	"_rt_FullFrameBuffer", TextureFormat_ARGB8888, clamp, 1.0, { width, height }, { width, height }
     );
-
-    if (transparent) {
-	constexpr GLfloat transparentBorder[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	glBindTexture (GL_TEXTURE_2D, this->m_sceneFBO->getTextureID (0));
-	glTexParameterfv (GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, transparentBorder);
-    }
 
     this->alias ("_rt_MipMappedFrameBuffer", "_rt_FullFrameBuffer");
 }

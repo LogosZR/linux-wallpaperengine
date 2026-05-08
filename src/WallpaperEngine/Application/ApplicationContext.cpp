@@ -297,14 +297,38 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.action ([this] (const std::string& value) -> void {
 	    this->settings.general.ipcSocketPath = value;
 	});
-    backgroundMode.add_argument ("--window-transparent")
-	.help ("Use a transparent framebuffer and clear with alpha=0. Lets the "
-	       "compositor show whatever's behind the window in areas the "
-	       "wallpaper doesn't cover (letterbox/pillarbox under fit scaling).")
-	.default_value (false)
-	.implicit_value (true)
-	.action ([this] (const std::string&) -> void {
-	    this->settings.general.windowTransparent = true;
+    backgroundMode.add_argument ("--background-mode")
+	.help ("How to paint the area outside the wallpaper under fit scaling. "
+	       "\"none\" (default) keeps the sampler clamp/repeat behavior. "
+	       "\"color=#RRGGBB\" paints a solid color.")
+	.default_value (std::string ("none"))
+	.action ([this] (const std::string& value) -> void {
+	    if (value == "none") {
+		this->settings.general.backgroundMode.kind = BackgroundMode::None;
+		return;
+	    }
+	    if (value.rfind ("color=", 0) == 0) {
+		std::string hex = value.substr (6);
+		if (!hex.empty () && hex.front () == '#') hex.erase (0, 1);
+		if (hex.size () != 6) {
+		    sLog.exception ("Invalid --background-mode color (expected #RRGGBB): ", value);
+		}
+		auto parseByte = [&] (size_t offset) {
+		    const char* p = hex.c_str () + offset;
+		    char* end = nullptr;
+		    const unsigned long byte = strtoul (std::string (p, 2).c_str (), &end, 16);
+		    if (end == nullptr || *end != '\0') {
+			sLog.exception ("Invalid --background-mode color (non-hex): ", value);
+		    }
+		    return static_cast<float> (byte) / 255.0f;
+		};
+		this->settings.general.backgroundMode.kind = BackgroundMode::Color;
+		this->settings.general.backgroundMode.color = {
+		    parseByte (0), parseByte (2), parseByte (4)
+		};
+		return;
+	    }
+	    sLog.exception ("Unknown --background-mode: ", value);
 	});
     backgroundMode.add_argument ("-r", "--screen-root")
 	.help ("The screen the following settings will have an effect on")

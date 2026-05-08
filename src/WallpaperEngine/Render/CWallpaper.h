@@ -172,6 +172,7 @@ private:
     GLuint m_shader = GL_NONE;
     // shader variables
     GLint g_Texture0 = GL_NONE;
+    GLint g_DiscardOutside = GL_NONE;
     GLint a_Position = GL_NONE;
     GLint a_TexCoord = GL_NONE;
     /** The framebuffer to draw the background to */

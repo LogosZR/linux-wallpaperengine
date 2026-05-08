@@ -54,6 +54,18 @@ public:
 	PlaylistSettings settings;
     };
 
+    /**
+     * How to render the area outside the wallpaper under fit/non-filling scaling.
+     * Parsed from --background-mode. See documentation on the `backgroundMode`
+     * field for the accepted syntax.
+     */
+    struct BackgroundMode {
+	enum Kind { None, Color /*, Blur (future) */ };
+	Kind kind = None;
+	/** Only used when kind == Color. RGB in [0,1]. */
+	glm::vec3 color = { 0.0f, 0.0f, 0.0f };
+    };
+
     struct {
 	/**
 	 * General settings
@@ -83,10 +95,11 @@ public:
 	    std::optional<PlaylistDefinition> defaultPlaylist;
 	    /** Unix socket path for runtime IPC control. Empty = disabled. */
 	    std::string ipcSocketPath;
-	    /** Use a transparent framebuffer + alpha=0 clear. Lets the
-	     *  compositor show whatever's behind the window in areas the
-	     *  wallpaper doesn't cover (letterbox/pillarbox under fit scaling). */
-	    bool windowTransparent;
+	    /** Background rendered in letterbox/pillarbox areas under fit scaling.
+	     *  `none` keeps upstream behavior (sampler clamp/repeat fills those areas).
+	     *  `color=#rrggbb` paints a solid color. `blur` (future) paints a
+	     *  blurred copy of the scene. */
+	    BackgroundMode backgroundMode;
 	} general;
 
 	/**
@@ -166,7 +179,7 @@ public:
             .screenPlaylists = {},
             .defaultPlaylist = std::nullopt,
             .ipcSocketPath = "",
-            .windowTransparent = false,
+            .backgroundMode = {},
         },
         .render = {
             .mode = NORMAL_WINDOW,

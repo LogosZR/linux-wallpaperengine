@@ -49,12 +49,6 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
 	glfwWindowHint (GLFW_FLOATING, GLFW_TRUE);
     }
 
-    // Transparent framebuffer — caller (e.g. Kuro's Jumbo blur-backdrop mode)
-    // wants the letterbox/pillarbox area to show the compositor-painted
-    // background through the window instead of lwe's clear color.
-    if (context.settings.general.windowTransparent) {
-	glfwWindowHint (GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
-    }
 
 #if !NDEBUG
     glfwWindowHint (GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE);
@@ -124,6 +118,14 @@ void GLFWOpenGLDriver::dispatchEventQueue () {
     static float startTime, endTime, minimumTime = 1.0f / this->m_context.settings.render.maximumFPS;
     // get the start time of the frame
     startTime = this->getRenderTime ();
+
+    // When background-mode=color, clear the default framebuffer to that color
+    // each frame. The scene blit only covers the fit-rect under fit scaling,
+    // so the pillarbox/letterbox area keeps this clear color.
+    const auto& bg = this->m_context.settings.general.backgroundMode;
+    if (bg.kind == Application::ApplicationContext::BackgroundMode::Color) {
+	glClearColor (bg.color.r, bg.color.g, bg.color.b, 1.0f);
+    }
     // clear the screen
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
