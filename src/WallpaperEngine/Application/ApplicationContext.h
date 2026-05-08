@@ -60,7 +60,7 @@ public:
      * field for the accepted syntax.
      */
     struct BackgroundMode {
-	enum Kind { None, Color /*, Blur (future) */ };
+	enum Kind { None, Color, Blur };
 	Kind kind = None;
 	/** Only used when kind == Color. RGB in [0,1]. */
 	glm::vec3 color = { 0.0f, 0.0f, 0.0f };

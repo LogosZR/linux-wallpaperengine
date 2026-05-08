@@ -300,11 +300,16 @@ void ApplicationContext::loadSettingsFromArgv () {
     backgroundMode.add_argument ("--background-mode")
 	.help ("How to paint the area outside the wallpaper under fit scaling. "
 	       "\"none\" (default) keeps the sampler clamp/repeat behavior. "
-	       "\"color=#RRGGBB\" paints a solid color.")
+	       "\"color=#RRGGBB\" paints a solid color. \"blur\" paints a blurred "
+	       "copy of the scene behind the fit rect.")
 	.default_value (std::string ("none"))
 	.action ([this] (const std::string& value) -> void {
 	    if (value == "none") {
 		this->settings.general.backgroundMode.kind = BackgroundMode::None;
+		return;
+	    }
+	    if (value == "blur") {
+		this->settings.general.backgroundMode.kind = BackgroundMode::Blur;
 		return;
 	    }
 	    if (value.rfind ("color=", 0) == 0) {

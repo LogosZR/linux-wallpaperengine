@@ -179,6 +179,20 @@ private:
     GLuint m_destFramebuffer = GL_NONE;
     /** Setups OpenGL's shaders for this wallpaper backbuffer */
     void setupShaders ();
+
+    // Backdrop-blur pipeline — opt-in per --background-mode blur.
+    // Two-pass gaussian: we downsample the scene FBO at half-res, then blur
+    // it in a separable H + V pass. The final texture fills the viewport
+    // behind the fit blit, so pillarbox/letterbox areas show blurred scene.
+    std::shared_ptr<const CFBO> m_backdropHalf = nullptr;
+    std::shared_ptr<const CFBO> m_backdropBlurH = nullptr;
+    std::shared_ptr<const CFBO> m_backdropBlurV = nullptr;
+    GLuint m_backdropBlurShader = GL_NONE;
+    GLint m_backdropBlurTex = GL_NONE;
+    GLint m_backdropBlurDirection = GL_NONE;
+    GLint m_backdropBlurTexelSize = GL_NONE;
+    void setupBackdropBlur ();
+    void renderBackdropBlur (const glm::ivec4& viewport);
     /** List of FBOs registered for this wallpaper */
     std::map<std::string, std::shared_ptr<const CFBO>> m_fbos = {};
     /** Audio context that is using this wallpaper */
