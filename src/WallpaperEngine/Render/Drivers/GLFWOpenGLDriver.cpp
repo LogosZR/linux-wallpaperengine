@@ -119,12 +119,17 @@ void GLFWOpenGLDriver::dispatchEventQueue () {
     // get the start time of the frame
     startTime = this->getRenderTime ();
 
-    // When background-mode=color, clear the default framebuffer to that color
-    // each frame. The scene blit only covers the fit-rect under fit scaling,
-    // so the pillarbox/letterbox area keeps this clear color.
+    // When background-mode fills the pillarbox with a color, set the clear
+    // color each frame so the scene blit leaves that color visible outside
+    // the fit-rect. `color=...` uses the parsed hex; `color=scheme` reads
+    // the live scene clear color so the pillarbox tracks schemecolor
+    // property tweaks automatically.
     const auto& bg = this->m_context.settings.general.backgroundMode;
     if (bg.kind == Application::ApplicationContext::BackgroundMode::Color) {
 	glClearColor (bg.color.r, bg.color.g, bg.color.b, 1.0f);
+    } else if (bg.kind == Application::ApplicationContext::BackgroundMode::ColorScheme) {
+	const glm::vec3 scheme = this->getApp ().getSceneClearColor ();
+	glClearColor (scheme.r, scheme.g, scheme.b, 1.0f);
     }
     // clear the screen
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

@@ -28,6 +28,9 @@ std::optional<ApplicationContext::BackgroundMode> ApplicationContext::Background
     if (value == "blur") {
 	return BackgroundMode { .kind = Blur };
     }
+    if (value == "color=scheme") {
+	return BackgroundMode { .kind = ColorScheme };
+    }
     if (value.rfind ("color=", 0) == 0) {
 	std::string hex = value.substr (6);
 	if (!hex.empty () && hex.front () == '#') hex.erase (0, 1);

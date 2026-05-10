@@ -129,6 +129,14 @@ public:
     void ipcSetEyedropperActive (bool active);
 
     /**
+     * Read the active scene's live clear color (a.k.a. scheme color). Used
+     * by --background-mode=color=scheme to paint the pillarbox with
+     * whatever the scene is currently rendering as its clear. Returns
+     * black when no scene is loaded or the wallpaper isn't a Scene.
+     */
+    glm::vec3 getSceneClearColor () const;
+
+    /**
      * Invoked each frame from the main loop while eyedropper mode is
      * active. Queries the current mouse position + left-click state and
      * pushes !cursor x y #rrggbb / !click x y #rrggbb events over the

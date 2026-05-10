@@ -620,6 +620,30 @@ bool WallpaperApplication::ipcSampleRegion (int x, int y, int w, int h, std::str
     return true;
 }
 
+glm::vec3 WallpaperApplication::getSceneClearColor () const {
+    // Walk the first loaded wallpaper. Prefer the `schemecolor` user
+    // property (what WE scenes expose to the user as the tweakable brand
+    // color) over the scene's internal `clearcolor` binding — they're
+    // usually different properties on the same scene.
+    for (const auto& [name, info] : this->m_backgrounds) {
+	if (!info) continue;
+	auto it = info->properties.find ("schemecolor");
+	if (it != info->properties.end () && it->second) {
+	    return it->second->getVec3 ();
+	}
+    }
+    // Fallback: the scene-internal clear color (whichever prop drives it).
+    for (const auto& [name, info] : this->m_backgrounds) {
+	if (info && info->wallpaper && info->wallpaper->is<Data::Model::Scene> ()) {
+	    const auto* scene = info->wallpaper->as<Data::Model::Scene> ();
+	    if (scene->colors.clear && scene->colors.clear->value) {
+		return scene->colors.clear->value->getVec3 ();
+	    }
+	}
+    }
+    return glm::vec3 (0.0f, 0.0f, 0.0f);
+}
+
 void WallpaperApplication::ipcSetEyedropperActive (bool active) {
     this->m_eyedropperActive = active;
     this->m_lastEyedropperPos = { -1, -1 };

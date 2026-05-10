@@ -60,15 +60,19 @@ public:
      * field for the accepted syntax.
      */
     struct BackgroundMode {
-	enum Kind { None, Color, Blur };
+	enum Kind { None, Color, ColorScheme, Blur };
 	Kind kind = None;
 	/** Only used when kind == Color. RGB in [0,1]. */
 	glm::vec3 color = { 0.0f, 0.0f, 0.0f };
 
 	/**
-	 * Parse the `--background-mode` syntax ("none" / "blur" /
-	 * "color=#RRGGBB"). Returns std::nullopt on invalid input. Shared
-	 * between the CLI parser and the IPC set_background_mode command.
+	 * Parse the `--background-mode` syntax:
+	 *   "none"              — sampler clamp/repeat fills pillarbox
+	 *   "color=#RRGGBB"     — solid color fill
+	 *   "color=scheme"      — track the scene's own schemecolor (live)
+	 *   "blur"              — blurred copy of the live scene
+	 * Returns std::nullopt on invalid input. Shared between the CLI
+	 * parser and the IPC set_background_mode command.
 	 */
 	static std::optional<BackgroundMode> parse (const std::string& value);
     };
