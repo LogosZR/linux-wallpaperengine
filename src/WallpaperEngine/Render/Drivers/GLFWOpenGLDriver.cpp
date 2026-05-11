@@ -114,6 +114,10 @@ glm::ivec2 GLFWOpenGLDriver::getFramebufferSize () const {
 
 uint32_t GLFWOpenGLDriver::getFrameCounter () const { return this->m_frameCounter; }
 
+bool GLFWOpenGLDriver::isKeyPressed (int key) const {
+    return glfwGetKey (this->m_window, key) == GLFW_PRESS;
+}
+
 void GLFWOpenGLDriver::dispatchEventQueue () {
     static float startTime, endTime, minimumTime = 1.0f / this->m_context.settings.render.maximumFPS;
     // get the start time of the frame

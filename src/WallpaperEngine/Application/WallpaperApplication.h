@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <map>
 #include <random>
 
 #include "WallpaperEngine/Application/ApplicationContext.h"
@@ -154,6 +155,16 @@ public:
      */
     void pollClickForFocus ();
 
+    /**
+     * Forward keyboard shortcuts to the controlling host. When the
+     * preview window has keyboard focus the host's own DOM keydown
+     * listener never fires, so we poll a small set of hotkey keycodes
+     * each frame and emit `!key` events on rising edge. Names match
+     * the DOM's `KeyboardEvent.key` so Kuro's existing handler can
+     * dispatch them identically to real keyboard input.
+     */
+    void pollKeyboardForwarding ();
+
 private:
     /**
      * Sets up an asset locator for the given background
@@ -255,6 +266,9 @@ private:
     // render-time seconds (same clock as getRenderTime()).
     float m_lastEyedropperEmitTime = 0.0f;
     int m_lastFocusClick = 0;
+    // Per-key last-pressed state for keyboard forwarding. Key is the
+    // GLFW keycode; value is 1 while pressed. Emit `!key` on rising edge.
+    std::map<int, int> m_lastKeyState;
     std::mt19937 m_playlistRng { std::random_device {}() };
     bool m_isPaused = false;
     bool m_screenShotTaken = false;

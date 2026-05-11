@@ -63,6 +63,14 @@ public:
      */
     [[nodiscard]] virtual uint32_t getFrameCounter () const = 0;
     /**
+     * Current state of a key on the driver's keyboard, using the
+     * underlying toolkit's keycode (e.g. GLFW_KEY_*). Non-GLFW drivers
+     * may return false unconditionally. Used by the app's IPC layer to
+     * forward shortcut keys to a controlling host when the preview
+     * window has keyboard focus and the host window doesn't.
+     */
+    [[nodiscard]] virtual bool isKeyPressed (int key) const { return false; }
+    /**
      * @param name
      * @return GetProcAddress for this video driver
      */

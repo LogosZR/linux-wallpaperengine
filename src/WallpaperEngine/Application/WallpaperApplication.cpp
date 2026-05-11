@@ -712,6 +712,39 @@ void WallpaperApplication::pollClickForFocus () {
     this->m_lastFocusClick = click;
 }
 
+void WallpaperApplication::pollKeyboardForwarding () {
+    if (!this->m_ipcServer || !this->m_videoDriver) return;
+
+    // GLFW key → DOM KeyboardEvent.key name. We forward a curated set of
+    // hotkeys rather than every key so the IPC traffic stays bounded and
+    // we don't intercept text input on the host side. Letters map to the
+    // lowercase form; the host's handler normalizes case.
+    static const std::pair<int, const char*> kForwarded[] = {
+	{ 256, "Escape" },     // GLFW_KEY_ESCAPE
+	{ 257, "Enter" },      // GLFW_KEY_ENTER
+	{ 262, "ArrowRight" }, // GLFW_KEY_RIGHT
+	{ 263, "ArrowLeft" },  // GLFW_KEY_LEFT
+	{ 264, "ArrowDown" },  // GLFW_KEY_DOWN
+	{ 265, "ArrowUp" },    // GLFW_KEY_UP
+	{ 65,  "a" },          // GLFW_KEY_A
+	{ 66,  "b" },
+	{ 68,  "d" },
+	{ 70,  "f" },
+	{ 80,  "p" },          // GLFW_KEY_P
+	{ 83,  "s" },          // GLFW_KEY_S
+	{ 84,  "t" },          // GLFW_KEY_T
+    };
+
+    for (const auto& [keycode, name] : kForwarded) {
+	const int now = this->m_videoDriver->isKeyPressed (keycode) ? 1 : 0;
+	const int last = this->m_lastKeyState[keycode];
+	if (now && !last) {
+	    this->m_ipcServer->emitEvent ("key", name);
+	}
+	this->m_lastKeyState[keycode] = now;
+    }
+}
+
 void WallpaperApplication::setupBrowser () {
     bool anyWebProject = std::any_of (
 	this->m_backgrounds.begin (), this->m_backgrounds.end (),
@@ -1089,6 +1122,7 @@ void WallpaperApplication::show () {
 		if (this->m_ipcServer) this->m_ipcServer->poll ();
 		this->pollEyedropper ();
 		this->pollClickForFocus ();
+		this->pollKeyboardForwarding ();
 		render();
     }
     cleanup();
