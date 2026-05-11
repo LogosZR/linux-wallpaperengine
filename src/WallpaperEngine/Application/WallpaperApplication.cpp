@@ -698,6 +698,20 @@ void WallpaperApplication::pollEyedropper () {
     this->m_lastEyedropperClick = click;
 }
 
+void WallpaperApplication::pollClickForFocus () {
+    // Skip while eyedropper is active — its own !click event carries the
+    // signal and we don't want Kuro refocusing mid-pick. Also skip if
+    // the mouse input or IPC server isn't wired up.
+    if (this->m_eyedropperActive || !this->m_ipcServer || !this->m_videoDriver) return;
+
+    const auto& mouse = this->m_videoDriver->getInputContext ().getMouseInput ();
+    const int click = mouse.leftClick () == WallpaperEngine::Input::MouseClickStatus::Clicked ? 1 : 0;
+    if (click && !this->m_lastFocusClick) {
+	this->m_ipcServer->emitEvent ("focus_click", "");
+    }
+    this->m_lastFocusClick = click;
+}
+
 void WallpaperApplication::setupBrowser () {
     bool anyWebProject = std::any_of (
 	this->m_backgrounds.begin (), this->m_backgrounds.end (),
@@ -1074,6 +1088,7 @@ void WallpaperApplication::show () {
     while (this->m_context.state.general.keepRunning) {
 		if (this->m_ipcServer) this->m_ipcServer->poll ();
 		this->pollEyedropper ();
+		this->pollClickForFocus ();
 		render();
     }
     cleanup();

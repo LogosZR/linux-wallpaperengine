@@ -144,6 +144,16 @@ public:
      */
     void pollEyedropper ();
 
+    /**
+     * Invoked each frame from the main loop. Emits a `!focus_click`
+     * event over the IPC socket on every left-click rising edge so the
+     * controlling host (e.g. Kuro Jumbo) can refocus its window when
+     * the user clicks the preview. No-op while eyedropper mode is
+     * active — eyedropper's `!click` already carries the signal and
+     * we don't want the host stealing focus mid-pick.
+     */
+    void pollClickForFocus ();
+
 private:
     /**
      * Sets up an asset locator for the given background
@@ -244,6 +254,7 @@ private:
     // over an animated scene even when the mouse is stationary. Stored in
     // render-time seconds (same clock as getRenderTime()).
     float m_lastEyedropperEmitTime = 0.0f;
+    int m_lastFocusClick = 0;
     std::mt19937 m_playlistRng { std::random_device {}() };
     bool m_isPaused = false;
     bool m_screenShotTaken = false;
