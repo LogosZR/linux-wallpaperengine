@@ -240,6 +240,10 @@ private:
     bool m_eyedropperActive = false;
     glm::ivec2 m_lastEyedropperPos = { -1, -1 };
     int m_lastEyedropperClick = 0;
+    // Re-emit the cursor sample on a low-rate tick so the loupe refreshes
+    // over an animated scene even when the mouse is stationary. Stored in
+    // render-time seconds (same clock as getRenderTime()).
+    float m_lastEyedropperEmitTime = 0.0f;
     std::mt19937 m_playlistRng { std::random_device {}() };
     bool m_isPaused = false;
     bool m_screenShotTaken = false;

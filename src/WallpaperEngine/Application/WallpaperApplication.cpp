@@ -648,6 +648,7 @@ void WallpaperApplication::ipcSetEyedropperActive (bool active) {
     this->m_eyedropperActive = active;
     this->m_lastEyedropperPos = { -1, -1 };
     this->m_lastEyedropperClick = 0;
+    this->m_lastEyedropperEmitTime = 0.0f;
 }
 
 void WallpaperApplication::pollEyedropper () {
@@ -666,13 +667,20 @@ void WallpaperApplication::pollEyedropper () {
     const bool inBounds =
 	fx >= 0 && fy >= 0 && fx < fbSize.x && fy < fbSize.y;
 
-    // Cursor event — only when the position changes (and is in bounds).
-    if (inBounds && winPos != this->m_lastEyedropperPos) {
+    // Cursor event — fires on position change OR a low-rate tick so the
+    // loupe keeps refreshing over an animated scene when the cursor is
+    // stationary. 100ms feels responsive enough to read as "live" and is
+    // well below our per-key IPC debounce.
+    const float now = this->m_videoDriver->getRenderTime ();
+    const bool moved = winPos != this->m_lastEyedropperPos;
+    const bool idleTick = (now - this->m_lastEyedropperEmitTime) >= 0.1f;
+    if (inBounds && (moved || idleTick)) {
 	std::string hex;
 	if (this->ipcSamplePixel (fx, fy, hex)) {
 	    std::ostringstream data;
 	    data << fx << ' ' << fy << ' ' << hex;
 	    this->m_ipcServer->emitEvent ("cursor", data.str ());
+	    this->m_lastEyedropperEmitTime = now;
 	}
 	this->m_lastEyedropperPos = winPos;
     }
