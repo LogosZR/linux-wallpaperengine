@@ -343,7 +343,8 @@ void ApplicationContext::loadSettingsFromArgv () {
 		sLog.exception ("Invalid --background-mode: ", value);
 	    }
 	    this->settings.general.backgroundMode = *parsed;
-	});
+	})
+	.append ();
     backgroundMode.add_argument ("-r", "--screen-root")
 	.help ("The screen the following settings will have an effect on")
 	.action ([this, &lastScreen] (const std::string& value) -> void {
