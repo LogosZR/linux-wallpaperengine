@@ -123,6 +123,17 @@ public:
     bool ipcSampleRegion (int x, int y, int w, int h, std::string& outHex);
 
     /**
+     * Handle IPC load_scene request. Loads a new wallpaper bundle from
+     * the given path and atomically swaps it into the named screen's
+     * slot — no process respawn, no GL context teardown, the IPC socket
+     * stays alive. Same code path as advancePlaylist() minus the
+     * playlist scheduling. Pass empty `screen` to target "default".
+     * Returns true on success; false (with `outError` populated) on
+     * load failure (missing bundle, parse error, etc.).
+     */
+    bool ipcLoadScene (const std::string& path, const std::string& screen, std::string& outError);
+
+    /**
      * Handle IPC start/stop_eyedropper commands. When active, the main
      * loop emits !cursor / !click events each frame whenever the mouse
      * moves inside the window or left-click is pressed.

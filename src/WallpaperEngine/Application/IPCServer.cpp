@@ -186,6 +186,26 @@ void IPCServer::handleRequest (uint64_t id, const std::string& cmd, const std::s
 		} else {
 			writeResponse (id, false, "sample failed");
 		}
+	} else if (cmd == "load_scene") {
+		// Format: #<id> load_scene <path> [screen]
+		// path is a single token (no spaces — workshop paths are
+		// digits-only by convention). screen optional, defaults to
+		// "default" (single-window/Jumbo case).
+		std::istringstream iss (rest);
+		std::string path;
+		std::string screen;
+		iss >> path;
+		if (path.empty ()) {
+			writeResponse (id, false, "expected: load_scene <path> [screen]");
+			return;
+		}
+		iss >> screen;
+		std::string err;
+		if (m_app.ipcLoadScene (path, screen, err)) {
+			writeResponse (id, true, "");
+		} else {
+			writeResponse (id, false, err);
+		}
 	} else {
 		writeResponse (id, false, "unknown command: " + cmd);
 	}

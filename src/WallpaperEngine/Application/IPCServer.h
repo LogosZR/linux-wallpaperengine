@@ -21,7 +21,7 @@ class WallpaperApplication;
  * Fire-and-forget commands: reposition, set_property, set_background_mode,
  * start_eyedropper, stop_eyedropper.
  *
- * Request/response commands: sample_pixel.
+ * Request/response commands: sample_pixel, sample_region, load_scene.
  *
  * Events: cursor, click (emitted while eyedropper mode is active).
  */

@@ -537,6 +537,78 @@ bool WallpaperApplication::ipcSetBackgroundMode (const std::string& value) {
     return true;
 }
 
+bool WallpaperApplication::ipcLoadScene (const std::string& path, const std::string& screen, std::string& outError) {
+    // Resolve target screen — caller passes empty for "default" (single-window
+    // mode like Jumbo) or a screen name (apply mode).
+    const std::string target = screen.empty () ? std::string ("default") : screen;
+
+    // Make a viewport current before any GL work — same precondition the
+    // playlist path enforces. Without an active context, asset uploads in
+    // CWallpaper::fromWallpaper crash hard.
+    if (!this->makeAnyViewportCurrent ()) {
+	outError = "no active viewport";
+	return false;
+    }
+
+    ProjectUniquePtr project;
+    try {
+	project = this->loadBackground (path);
+    } catch (const std::exception& e) {
+	outError = std::string ("loadBackground: ") + e.what ();
+	return false;
+    }
+
+    if (!project) {
+	outError = "loadBackground returned null";
+	return false;
+    }
+
+    try {
+	this->setupPropertiesForProject (*project);
+	this->ensureBrowserForProject (*project);
+    } catch (const std::exception& e) {
+	outError = std::string ("setupProperties: ") + e.what ();
+	return false;
+    }
+
+    this->m_backgrounds[target] = std::move (project);
+
+    // Resolve scaling/clamp the same way advancePlaylist does — per-screen
+    // override falls back to the global render-window default.
+    const auto scalingIt = this->m_context.settings.general.screenScalings.find (target);
+    const auto clampIt = this->m_context.settings.general.screenClamps.find (target);
+    const auto scaling = scalingIt != this->m_context.settings.general.screenScalings.end ()
+	? scalingIt->second
+	: this->m_context.settings.render.window.scalingMode;
+    const auto clamp = clampIt != this->m_context.settings.general.screenClamps.end ()
+	? clampIt->second
+	: this->m_context.settings.render.window.clamp;
+
+    if (!this->m_renderContext) {
+	outError = "render context not initialized";
+	return false;
+    }
+
+    try {
+	this->m_renderContext->setWallpaper (
+	    target,
+	    Render::CWallpaper::fromWallpaper (
+		*this->m_backgrounds[target]->wallpaper, *this->m_renderContext, *this->m_audioContext,
+		this->m_browserContext.get (), scaling, clamp
+	    )
+	);
+    } catch (const std::exception& e) {
+	outError = std::string ("setWallpaper: ") + e.what ();
+	return false;
+    }
+
+    // Track the new path so subsequent --background-mode/--set-property/etc.
+    // serializations reflect reality (matches advancePlaylist behavior).
+    this->m_context.settings.general.screenBackgrounds[target] = path;
+    sLog.out ("ipcLoadScene: swapped ", target, " → ", path);
+    return true;
+}
+
 bool WallpaperApplication::ipcSamplePixel (int x, int y, std::string& outHex) {
     if (!this->m_videoDriver) return false;
     const glm::ivec2 fbSize = this->m_videoDriver->getFramebufferSize ();
