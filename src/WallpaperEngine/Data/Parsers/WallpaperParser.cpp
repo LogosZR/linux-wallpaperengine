@@ -97,7 +97,29 @@ ObjectList WallpaperParser::parseObjects (const JSON& objects, const Project& pr
     ObjectList result = {};
 
     for (const auto& cur : objects) {
-	result.emplace_back (ObjectParser::parse (cur, project));
+	// Soft-fail per object: a single broken object (unsupported scripted
+	// binding, malformed JSON, unknown type, etc.) shouldn't crash the
+	// entire wallpaper load. Log the failure with the offending object's
+	// id/name when available so the user can identify which layer
+	// vanished, then skip and continue.
+	try {
+	    result.emplace_back (ObjectParser::parse (cur, project));
+	} catch (const std::exception& e) {
+	    const auto idIt = cur.find ("id");
+	    const auto nameIt = cur.find ("name");
+	    int id = (idIt != cur.end () && idIt->is_number ()) ? idIt->get<int> () : -1;
+	    std::string name = "unknown";
+	    if (nameIt != cur.end ()) {
+		if (nameIt->is_string ()) {
+		    name = nameIt->get<std::string> ();
+		} else if (nameIt->is_number ()) {
+		    name = std::to_string (nameIt->get<int> ());
+		}
+	    }
+	    sLog.error (
+		"Skipping object id=", id, " name=\"", name, "\" — parse failed: ", e.what ()
+	    );
+	}
     }
 
     return result;
