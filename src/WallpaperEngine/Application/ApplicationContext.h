@@ -106,6 +106,11 @@ public:
 	    std::optional<PlaylistDefinition> defaultPlaylist;
 	    /** Unix socket path for runtime IPC control. Empty = disabled. */
 	    std::string ipcSocketPath;
+	    /** When true, render pixels are written to a shared-memory file
+	     *  each frame (via glReadPixels) and the path is emitted over IPC
+	     *  as an !shm event. Enables external compositing by the host app
+	     *  without DMA-BUF/EGL dependencies. */
+	    bool shmOutput = false;
 	    /** Background rendered in letterbox/pillarbox areas under fit scaling.
 	     *  `none` keeps upstream behavior (sampler clamp/repeat fills those areas).
 	     *  `color=#rrggbb` paints a solid color. `blur` (future) paints a

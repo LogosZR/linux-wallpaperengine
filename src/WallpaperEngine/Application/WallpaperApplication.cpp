@@ -1200,6 +1200,22 @@ void WallpaperApplication::cleanup () {
 
 void WallpaperApplication::show () {
 	setup();
+
+    // Emit the shm path over IPC once so the host knows where to mmap.
+    // We wait until setup() completes because the output (which creates
+    // the shm buffer) is initialized inside setup().
+    if (this->m_ipcServer && this->m_context.settings.general.shmOutput) {
+	auto* glOut = dynamic_cast<Render::Drivers::Output::GLFWWindowOutput*> (this->m_videoDriver->getOutputPtr ());
+	if (glOut && glOut->shmActive ()) {
+	    this->m_ipcServer->emitEvent (
+		"shm",
+		glOut->shmPath () + " " +
+		std::to_string (glOut->getFullWidth ()) + " " +
+		std::to_string (glOut->getFullHeight ())
+	    );
+	}
+    }
+
     while (this->m_context.state.general.keepRunning) {
 		if (this->m_ipcServer) this->m_ipcServer->poll ();
 		this->pollEyedropper ();

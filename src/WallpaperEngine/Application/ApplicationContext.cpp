@@ -331,6 +331,14 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.action ([this] (const std::string& value) -> void {
 	    this->settings.general.ipcSocketPath = value;
 	});
+    backgroundMode.add_argument ("--shm-output")
+	.help ("Write rendered frames to a /dev/shm buffer each tick and emit "
+	       "the path+dimensions over IPC (!shm event). Enables external "
+	       "compositing by the host app.")
+	.flag ()
+	.action ([this] (const std::string&) -> void {
+	    this->settings.general.shmOutput = true;
+	});
     backgroundMode.add_argument ("--background-mode")
 	.help ("How to paint the area outside the wallpaper under fit scaling. "
 	       "\"none\" (default) keeps the sampler clamp/repeat behavior. "

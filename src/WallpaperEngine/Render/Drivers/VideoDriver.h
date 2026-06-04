@@ -30,6 +30,9 @@ public:
      * @return The current output in use
      */
     [[nodiscard]] virtual Output::Output& getOutput () = 0;
+    /** Raw pointer variant — allows dynamic_cast from callers that need
+     *  the concrete output type. */
+    [[nodiscard]] virtual Output::Output* getOutputPtr () { return &getOutput (); }
     /**
      * @return The time that has passed since the driver started
      */
