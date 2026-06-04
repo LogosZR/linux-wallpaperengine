@@ -33,9 +33,13 @@ public:
      */
     static int preparseSize (const std::string& str) {
 	const char* p = str.c_str ();
-	const char* first = strchr (p, ' ');
-	const char* second = first ? strchr (first + 1, ' ') : nullptr;
-	const char* third = second ? strchr (second + 1, ' ') : nullptr;
+	// Accept either space or comma as separators — some wallpapers in the
+	// wild use comma-separated vectors ("0.10,0.11,0.12") instead of
+	// space-separated, and rejecting them just means the wallpaper fails
+	// to load for a cosmetic format difference.
+	const char* first = strpbrk (p, " ,");
+	const char* second = first ? strpbrk (first + 1, " ,") : nullptr;
+	const char* third = second ? strpbrk (second + 1, " ,") : nullptr;
 
 	if (first == nullptr) {
 	    return 1;
@@ -72,10 +76,11 @@ public:
 
 	const char* p = str.c_str ();
 
-	// get up to 4 spaces
-	const char* first = strchr (p, ' ');
-	const char* second = first ? strchr (first + 1, ' ') : nullptr;
-	const char* third = second ? strchr (second + 1, ' ') : nullptr;
+	// get up to 4 separators (space or comma — wallpapers in the wild
+	// use either; both forms are equivalent for vector parsing)
+	const char* first = strpbrk (p, " ,");
+	const char* second = first ? strpbrk (first + 1, " ,") : nullptr;
+	const char* third = second ? strpbrk (second + 1, " ,") : nullptr;
 
 	// validate lengths against what was found in the strings
 	if constexpr (length == 1) {
