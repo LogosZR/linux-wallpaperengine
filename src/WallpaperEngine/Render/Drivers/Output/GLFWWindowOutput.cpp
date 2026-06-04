@@ -37,6 +37,13 @@ GLFWWindowOutput::GLFWWindowOutput (ApplicationContext& context, VideoDriver& dr
     // Set up shared-memory pixel export if requested.
     if (this->m_context.settings.general.shmOutput) {
 	this->setupShm ();
+	// Hide lwe's own window when in shm mode — the host app owns the
+	// display surface and reads pixels from the shm buffer. The GLFW
+	// window still exists (GL context needs it) but isn't shown to
+	// the user. glfwSwapBuffers + glReadPixels both work on a hidden
+	// window; the framebuffer is unaffected by visibility.
+	driver.hideWindow ();
+	sLog.out ("SHM mode: lwe window hidden (host owns the display surface)");
     }
 }
 
