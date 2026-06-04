@@ -199,8 +199,9 @@ void WallpaperApplication::loadBackgrounds () {
 }
 
 ProjectUniquePtr WallpaperApplication::loadBackground (const std::string& bg) {
-    auto container = this->setupAssetLocator (bg);
-    auto json = WallpaperEngine::Data::JSON::JSON::parse (container->readString ("project.json"));
+    try {
+	auto container = this->setupAssetLocator (bg);
+	auto json = WallpaperEngine::Data::JSON::JSON::parse (container->readString ("project.json"));
 
     // when a background is loaded, reset the screenshot variables
     // this allows taking screenshots after a background changes
@@ -216,6 +217,15 @@ ProjectUniquePtr WallpaperApplication::loadBackground (const std::string& bg) {
     }
 
     return WallpaperEngine::Data::Parsers::ProjectParser::parse (json, std::move (container));
+    } catch (const std::exception& e) {
+	// Re-throw with the wallpaper path prefixed so the top-level catch
+	// in main.cpp can tell us WHICH wallpaper killed the parser. Without
+	// this we just see 'type must be number, but is string' and have
+	// to guess the bg from process arg history.
+	throw std::runtime_error (
+	    std::string ("loadBackground failed for bg=") + bg + ": " + e.what ()
+	);
+    }
 }
 
 std::vector<std::size_t>
