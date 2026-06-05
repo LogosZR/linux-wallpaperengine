@@ -130,3 +130,70 @@ private:
 };
 
 } // namespace WallpaperEngine::Data::JSON
+
+// ── Lenient JSON preprocessing ───────────────────────────────────────────────
+// Wallpaper Engine's editor produces "relaxed JSON" with trailing commas
+// (e.g., `["a", "b",]` or `{"x": 1,}`). nlohmann::json is strict and
+// rejects these. Strip trailing commas before parsing so wallpapers that
+// worked in the Windows WE client also work here.
+namespace WallpaperEngine::Data::JSON {
+
+inline std::string stripTrailingCommas (const std::string& input) {
+    std::string result;
+    result.reserve (input.size ());
+
+    bool inString = false;
+    bool escaped = false;
+
+    for (size_t i = 0; i < input.size (); ++i) {
+	char c = input[i];
+
+	if (escaped) {
+	    escaped = false;
+	    result += c;
+	    continue;
+	}
+
+	if (c == '\\' && inString) {
+	    escaped = true;
+	    result += c;
+	    continue;
+	}
+
+	if (c == '"') {
+	    inString = !inString;
+	    result += c;
+	    continue;
+	}
+
+	if (inString) {
+	    result += c;
+	    continue;
+	}
+
+	// Outside a string: check for trailing comma before ] or }
+	if (c == ',') {
+	    // Look ahead past whitespace for ] or }
+	    size_t j = i + 1;
+	    while (j < input.size () && (input[j] == ' ' || input[j] == '\t' || input[j] == '\n' || input[j] == '\r')) {
+		++j;
+	    }
+	    if (j < input.size () && (input[j] == ']' || input[j] == '}')) {
+		// Skip this trailing comma
+		continue;
+	    }
+	}
+
+	result += c;
+    }
+
+    return result;
+}
+
+/// Parse JSON with trailing-comma tolerance. Drop-in replacement for
+/// JSON::parse() that preprocesses the input string.
+inline JSON parseLenient (const std::string& input) {
+    return JSON::parse (stripTrailingCommas (input));
+}
+
+} // namespace WallpaperEngine::Data::JSON
