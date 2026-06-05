@@ -254,6 +254,32 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
     std::ostringstream wrapper;
     wrapper << "(function() {\n"
 	    << "  var __props = globalThis.__scriptProps;\n"
+	    // ── WPE engine global stub ──────────────────────────────────────
+	    // Wallpaper Engine scripts expect a global `engine` object with
+	    // frametime, registerAudioBuffers, and registerCallback. We stub
+	    // these so scripts don't throw ReferenceError at load time. Audio
+	    // buffers return zeros (audio reactive not yet wired); frametime
+	    // is set per-eval from globalThis.__frametime.
+	    << "  var engine = {\n"
+	    << "    frametime: globalThis.__frametime || 0.016,\n"
+	    << "    runtime: 0,\n"
+	    << "    fps: 30,\n"
+	    << "    registerAudioBuffers: function(resolution) {\n"
+	    << "      resolution = resolution || 64;\n"
+	    << "      var left = new Array(resolution); var right = new Array(resolution);\n"
+	    << "      for (var i = 0; i < resolution; i++) { left[i] = 0; right[i] = 0; }\n"
+	    << "      return [left, right];\n"
+	    << "    },\n"
+	    << "    registerCallback: function(name, fn) { /* no-op */ },\n"
+	    << "    setTimeout: function(fn, ms) { /* no-op */ },\n"
+	    << "  };\n"
+	    // ── Vec3 class stub ─────────────────────────────────────────────
+	    << "  function Vec3(x, y, z) { this.x = x||0; this.y = y||0; this.z = z||0; }\n"
+	    << "  Vec3.prototype.toString = function() { return this.x+' '+this.y+' '+this.z; };\n"
+	    // ── Shared/MediaPlaybackEvent stubs ─────────────────────────────
+	    << "  var shared = {};\n"
+	    << "  var MediaPlaybackEvent = { state: 0 };\n"
+	    // ────────────────────────────────────────────────────────────────
 	    << "  function createScriptProperties() {\n"
 	    << "    var builder = {\n"
 	    << "      addSlider: function(opts) {\n"
@@ -411,7 +437,21 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "  var engine = {\n"
 	    << "    get frametime() { var c = globalThis.__sceneCtx; return c ? c.dt : 0; },\n"
 	    << "    get time()      { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
+	    << "    fps: 30,\n"
+	    << "    runtime: 0,\n"
+	    << "    registerAudioBuffers: function(res) {\n"
+	    << "      res = res || 64;\n"
+	    << "      var left = new Array(res); var right = new Array(res);\n"
+	    << "      for(var i=0;i<res;i++){ left[i]=0; right[i]=0; }\n"
+	    << "      return [left, right];\n"
+	    << "    },\n"
+	    << "    registerCallback: function(name, fn) { /* no-op */ },\n"
+	    << "    setTimeout: function(fn, ms) { /* no-op */ },\n"
 	    << "  };\n"
+	    << "  function Vec3(x,y,z){ this.x=x||0; this.y=y||0; this.z=z||0; }\n"
+	    << "  Vec3.prototype.toString = function(){ return this.x+' '+this.y+' '+this.z; };\n"
+	    << "  var shared = {};\n"
+	    << "  var MediaPlaybackEvent = { state: 0 };\n"
 	    << "  function createScriptProperties() {\n"
 	    << "    var builder = {\n"
 	    << "      addSlider:   function(o){ if (!(o.name in __props)) __props[o.name] = o.value; return builder; },\n"
