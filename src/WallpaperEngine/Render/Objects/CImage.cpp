@@ -279,6 +279,12 @@ void CImage::setup () {
 	// invisible effects, so toggling the backing user property via IPC
 	// live-enables/disables the effect without a respawn.
 	for (const auto& cur : this->m_image.effects) {
+	    // Wrap per-effect pass construction in try/catch so a single
+	    // broken effect (e.g., audio shader that exceeds NVIDIA's
+	    // uniform register budget) doesn't kill the entire image layer.
+	    // The image renders without that one effect instead of being
+	    // completely invisible.
+	    try {
 	    const auto fboProvider = std::make_shared<FBOProvider> (this);
 
 	    // create all the fbos for this effect
@@ -352,6 +358,17 @@ void CImage::setup () {
 		    if (curOverride != endOverride) {
 			++curOverride;
 		    }
+		}
+	    }
+	    } catch (const std::exception& e) {
+		sLog.error (
+		    "Skipping effect on image \"", this->getImage ().name,
+		    "\" — effect pass compilation failed: ", e.what ()
+		);
+		// For passthrough/composition layers, bail the entire chain.
+		if (this->m_image.model->passthrough) {
+		    sLog.error ("Composition layer — disabling layer entirely (passthrough corruption guard)");
+		    return;
 		}
 	    }
 	}
