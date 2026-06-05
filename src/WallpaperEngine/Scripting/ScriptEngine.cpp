@@ -272,6 +272,7 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "    },\n"
 	    << "    registerCallback: function(name, fn) { /* no-op */ },\n"
 	    << "    setTimeout: function(fn, ms) { /* no-op */ },\n"
+	    << "    userProperties: __props,\n"
 	    << "  };\n"
 	    // ── Vec3 class stub ─────────────────────────────────────────────
 	    << "  function Vec3(x, y, z) { this.x = x||0; this.y = y||0; this.z = z||0; }\n"
@@ -447,6 +448,7 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "    },\n"
 	    << "    registerCallback: function(name, fn) { /* no-op */ },\n"
 	    << "    setTimeout: function(fn, ms) { /* no-op */ },\n"
+	    << "    userProperties: __props,\n"
 	    << "  };\n"
 	    << "  function Vec3(x,y,z){ this.x=x||0; this.y=y||0; this.z=z||0; }\n"
 	    << "  Vec3.prototype.toString = function(){ return this.x+' '+this.y+' '+this.z; };\n"
