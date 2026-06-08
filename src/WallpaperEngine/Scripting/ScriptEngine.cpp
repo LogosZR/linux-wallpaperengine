@@ -325,7 +325,10 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "          resolution = resolution || 64;\n"
 	    << "          var left = new Array(resolution); var right = new Array(resolution); var avg = new Array(resolution);\n"
 	    << "          for (var i = 0; i < resolution; i++) { left[i] = 0; right[i] = 0; avg[i] = 0; }\n"
-	    // Hybrid shape: works for both array-destructure consumers\n	    // (`var [l, r] = engine.registerAudioBuffers()`) and property-style\n	    // consumers (`audioBuffer.average[i]`, `audioBuffer.left[i]`).\n	    // Without the .average / .left / .right named accessors, scripts\n	    // doing audioBuffer.average[N] hit `undefined[N]` and throw\n	    // 'cannot read property N of undefined'.\n	    << "          var result = [left, right];\n"
+	    // Hybrid shape: works for both array-destructure consumers
+	    // (`var [l, r] = engine.registerAudioBuffers()`) and property-style
+	    // consumers (`audioBuffer.average[i]`, `audioBuffer.left[i]`).
+	    << "          var result = [left, right];\n"
 	    << "          result.average = avg;\n"
 	    << "          result.left = left;\n"
 	    << "          result.right = right;\n"
