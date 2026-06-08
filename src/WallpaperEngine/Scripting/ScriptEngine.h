@@ -2,7 +2,9 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "WallpaperEngine/Data/Model/DynamicValue.h"
 #include "WallpaperEngine/Data/Model/Types.h"
@@ -14,6 +16,10 @@ extern "C" {
 // Forward decl to avoid pulling Render headers into Scripting layer.
 namespace WallpaperEngine::Render::Wallpapers {
 class CScene;
+}
+
+namespace WallpaperEngine::Data::Model {
+class ScriptedDynamicValue;
 }
 
 namespace WallpaperEngine::Scripting {
@@ -121,13 +127,46 @@ public:
 
     /**
      * Make this scene the active context for thisScene.getLayer() lookups.
-     * Builds the JS-side layer registry (globalThis.__sceneLayers) and
-     * registers the C↔JS visible/alpha accessor functions.
+     * Stores the pointer and marks the JS layer registry dirty; the actual
+     * registry build is lazy and happens on first getLayer() call. This
+     * lets ScriptedDynamicValue evaluations during scene parse no-op safely
+     * before the scene is fully constructed, and ensures the registry
+     * always reflects the current scene state when scripts touch it.
      */
     void setScene (Render::Wallpapers::CScene* scene);
 
     /** Clear the active scene and tear down the JS layer registry. */
     void clearScene ();
+
+    /**
+     * Mark the scene as fully constructed. Releases the gate that defers
+     * initial reevaluation of every ScriptedDynamicValue. Called by
+     * CScene at the end of its constructor (after all objects parsed and
+     * --set-property overrides applied).
+     */
+    void sceneReady ();
+
+    /**
+     * Build (or rebuild) the JS layer registry from the active scene.
+     * Idempotent and cheap to call repeatedly; only rebuilds when dirty.
+     * Invoked by C accessor functions before resolving a layer name/index.
+     */
+    void ensureSceneRegistry ();
+
+    /**
+     * Track a ScriptedDynamicValue across its lifetime so we can drive
+     * lifecycle events (initial eval at sceneReady, per-frame tick).
+     * Called by ScriptedDynamicValue ctor/dtor.
+     */
+    void registerLiveScript (Data::Model::ScriptedDynamicValue* sv);
+    void unregisterLiveScript (Data::Model::ScriptedDynamicValue* sv);
+
+    /**
+     * Returns true once sceneReady() has fired. Before that, scripts that
+     * try to evaluate should defer (queue themselves for first eval) so
+     * they don't run against a half-built scene.
+     */
+    bool isSceneReady () const { return this->m_sceneReady; }
 
     /**
      * Resolve a layer name to its CObject id within the active scene.
@@ -161,7 +200,11 @@ private:
     ScriptLayerHandle m_nextLayerId = 1;
     bool m_layerRegistryReady = false;
     bool m_sceneRegistryReady = false;
+    bool m_sceneRegistryDirty = false;
+    bool m_sceneReady = false;
     std::map<ScriptLayerHandle, bool> m_layerInitialized;
     Render::Wallpapers::CScene* m_currentScene = nullptr;
+    std::set<Data::Model::ScriptedDynamicValue*> m_liveScripts;
+    std::vector<Data::Model::ScriptedDynamicValue*> m_pendingFirstEval;
 };
 } // namespace WallpaperEngine::Scripting

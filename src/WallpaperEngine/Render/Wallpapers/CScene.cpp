@@ -138,10 +138,14 @@ CScene::CScene (
     }
 
     // Register this scene as the active context for thisScene.getLayer()
-    // lookups in the JS scripting engine. Property scripts that fire from
-    // ScriptedDynamicValue::reevaluate() expect to resolve layer names
-    // against THIS scene's m_objects. Done last so all objects are present.
+    // lookups in the JS scripting engine. setScene only stores the pointer
+    // and marks the registry dirty — the JS layer proxies are built lazily
+    // on first script touch via __ensureSceneRegistry. sceneReady() releases
+    // the gate that defers initial reevaluation of every ScriptedDynamicValue,
+    // so all queued scripts run with the registry populated AND with
+    // any --set-property overrides already applied.
     Scripting::ScriptEngine::instance ().setScene (this);
+    Scripting::ScriptEngine::instance ().sceneReady ();
 }
 
 CScene::~CScene () {

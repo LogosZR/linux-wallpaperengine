@@ -4,7 +4,9 @@
 #include "WallpaperEngine/Render/CObject.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
 #include "WallpaperEngine/Data/Model/Object.h"
+#include "WallpaperEngine/Data/Model/ScriptedDynamicValue.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <sstream>
 
@@ -15,6 +17,17 @@ using WallpaperEngine::Render::Objects::CImage;
 using WallpaperEngine::Render::Wallpapers::CScene;
 
 static std::unique_ptr<ScriptEngine> sScriptEngine;
+
+// Forward decls of file-static C↔JS callbacks. Defined further down in
+// an anonymous namespace; declared up here so the ScriptEngine constructor
+// can register them as global JS functions.
+namespace {
+JSValue js_ensureSceneRegistry (JSContext*, JSValueConst, int, JSValueConst*);
+JSValue js_getLayerVisible    (JSContext*, JSValueConst, int, JSValueConst*);
+JSValue js_setLayerVisible    (JSContext*, JSValueConst, int, JSValueConst*);
+JSValue js_getLayerAlpha      (JSContext*, JSValueConst, int, JSValueConst*);
+JSValue js_setLayerAlpha      (JSContext*, JSValueConst, int, JSValueConst*);
+} // namespace
 
 ScriptEngine& ScriptEngine::instance () {
     if (!sScriptEngine) {
@@ -37,6 +50,24 @@ ScriptEngine::ScriptEngine () {
 	this->m_runtime = nullptr;
 	return;
     }
+
+    // Register C-side accessors for scene-aware scripting (getLayer/setLayer
+    // visibility/alpha + ensureSceneRegistry). They all delegate to the
+    // singleton, so they're safe to call before any scene is loaded — they
+    // simply return safe defaults until setScene+sceneReady have run.
+    JSContext* ctx = this->m_context;
+    JSValue globalObj = JS_GetGlobalObject (ctx);
+    JS_SetPropertyStr (ctx, globalObj, "__getLayerVisible",
+	JS_NewCFunction (ctx, js_getLayerVisible, "__getLayerVisible", 1));
+    JS_SetPropertyStr (ctx, globalObj, "__setLayerVisible",
+	JS_NewCFunction (ctx, js_setLayerVisible, "__setLayerVisible", 2));
+    JS_SetPropertyStr (ctx, globalObj, "__getLayerAlpha",
+	JS_NewCFunction (ctx, js_getLayerAlpha, "__getLayerAlpha", 1));
+    JS_SetPropertyStr (ctx, globalObj, "__setLayerAlpha",
+	JS_NewCFunction (ctx, js_setLayerAlpha, "__setLayerAlpha", 2));
+    JS_SetPropertyStr (ctx, globalObj, "__ensureSceneRegistry",
+	JS_NewCFunction (ctx, js_ensureSceneRegistry, "__ensureSceneRegistry", 0));
+    JS_FreeValue (ctx, globalObj);
 }
 
 ScriptEngine::~ScriptEngine () {
@@ -298,6 +329,7 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "  var __layerStub = { __id: 0, name: '', visible: false, alpha: 1.0 };\n"
 	    << "  var thisScene = {\n"
 	    << "    getLayer: function(arg) {\n"
+	    << "      if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
 	    << "      if (typeof arg === 'number') {\n"
 	    << "        var arr = globalThis.__sceneLayersByIndex;\n"
 	    << "        return (arr && arr[arg]) ? arr[arg] : __layerStub;\n"
@@ -306,6 +338,7 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "      return (l && l[arg]) ? l[arg] : __layerStub;\n"
 	    << "    },\n"
 	    << "    getLayerCount: function() {\n"
+	    << "      if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
 	    << "      return globalThis.__sceneLayerCount || 0;\n"
 	    << "    }\n"
 	    << "  };\n"
@@ -491,6 +524,7 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "    get dt()          { var c = globalThis.__sceneCtx; return c ? c.dt   : 0; },\n"
 	    << "    get fps()         { var c = globalThis.__sceneCtx; return c ? c.fps  : 60; },\n"
 	    << "    getLayer: function(arg) {\n"
+	    << "      if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
 	    << "      if (typeof arg === 'number') {\n"
 	    << "        var arr = globalThis.__sceneLayersByIndex;\n"
 	    << "        return (arr && arr[arg]) ? arr[arg] : __layerStub;\n"
@@ -499,6 +533,7 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "      return (l && l[arg]) ? l[arg] : __layerStub;\n"
 	    << "    },\n"
 	    << "    getLayerCount: function() {\n"
+	    << "      if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
 	    << "      return globalThis.__sceneLayerCount || 0;\n"
 	    << "    }\n"
 	    << "  };\n"
@@ -710,6 +745,15 @@ ScriptEngine& engineForCallback () {
     return ScriptEngine::instance ();
 }
 
+// JS: __ensureSceneRegistry() -> undefined. Triggers a lazy build of
+// globalThis.__sceneLayers if the engine has marked it dirty. Called from
+// thisScene.getLayer() / getLayerCount() before resolving so scripts always
+// see a populated registry, no matter when in the scene lifecycle they run.
+JSValue js_ensureSceneRegistry (JSContext* /*ctx*/, JSValueConst /*this_val*/, int /*argc*/, JSValueConst* /*argv*/) {
+    engineForCallback ().ensureSceneRegistry ();
+    return JS_UNDEFINED;
+}
+
 // JS: __getLayerVisible(id) -> bool
 JSValue js_getLayerVisible (JSContext* ctx, JSValueConst /*this_val*/, int argc, JSValueConst* argv) {
     if (argc < 1) {
@@ -768,10 +812,16 @@ JSValue js_setLayerAlpha (JSContext* ctx, JSValueConst /*this_val*/, int argc, J
 } // anonymous namespace
 
 void ScriptEngine::setScene (CScene* scene) {
-    this->m_currentScene = scene;
-    if (this->m_context && scene != nullptr) {
-	this->buildSceneLayerRegistry ();
+    // Lazy: store the pointer and mark dirty. Actual JS registry build
+    // happens on first getLayer access (via ensureSceneRegistry()) so
+    // ScriptedDynamicValue evaluations during scene parse can no-op safely
+    // and registry rebuilds reflect the latest object set when scripts touch it.
+    if (this->m_currentScene != scene) {
+	this->m_sceneReady = false;
     }
+    this->m_currentScene = scene;
+    this->m_sceneRegistryDirty = (scene != nullptr);
+    this->m_sceneRegistryReady = false;
 }
 
 void ScriptEngine::clearScene () {
@@ -779,6 +829,63 @@ void ScriptEngine::clearScene () {
 	this->teardownSceneLayerRegistry ();
     }
     this->m_currentScene = nullptr;
+    this->m_sceneRegistryDirty = false;
+    this->m_sceneRegistryReady = false;
+    this->m_sceneReady = false;
+}
+
+void ScriptEngine::ensureSceneRegistry () {
+    if (!this->m_sceneRegistryDirty || this->m_currentScene == nullptr || this->m_context == nullptr) {
+	return;
+    }
+    this->buildSceneLayerRegistry ();
+    this->m_sceneRegistryDirty = false;
+}
+
+void ScriptEngine::sceneReady () {
+    // Ensure the registry exists for the very first eval pass, then run
+    // every queued ScriptedDynamicValue. From this point onward, normal
+    // property listeners on each script handle re-eval, and the per-frame
+    // tick covers time-aware scripts.
+    this->ensureSceneRegistry ();
+    this->m_sceneReady = true;
+
+    // Drain pending list. m_pendingFirstEval is populated by
+    // registerLiveScript() before sceneReady fires; after this we'll
+    // skip the queue and reevaluate inline.
+    auto pending = std::move (this->m_pendingFirstEval);
+    this->m_pendingFirstEval.clear ();
+    for (auto* sv : pending) {
+	if (this->m_liveScripts.find (sv) != this->m_liveScripts.end ()) {
+	    sv->reevaluate ();
+	}
+    }
+}
+
+void ScriptEngine::registerLiveScript (Data::Model::ScriptedDynamicValue* sv) {
+    if (sv == nullptr) {
+	return;
+    }
+    this->m_liveScripts.insert (sv);
+    if (!this->m_sceneReady) {
+	// Defer first eval until sceneReady() drains this list.
+	this->m_pendingFirstEval.push_back (sv);
+    } else {
+	// Scene already up; evaluate immediately so newly-attached scripts
+	// see current state.
+	sv->reevaluate ();
+    }
+}
+
+void ScriptEngine::unregisterLiveScript (Data::Model::ScriptedDynamicValue* sv) {
+    if (sv == nullptr) {
+	return;
+    }
+    this->m_liveScripts.erase (sv);
+    auto it = std::find (this->m_pendingFirstEval.begin (), this->m_pendingFirstEval.end (), sv);
+    if (it != this->m_pendingFirstEval.end ()) {
+	this->m_pendingFirstEval.erase (it);
+    }
 }
 
 int ScriptEngine::findObjectIdByName (const std::string& name) const {
@@ -871,16 +978,10 @@ void ScriptEngine::buildSceneLayerRegistry () {
     JSContext* ctx = this->m_context;
     JSValue globalObj = JS_GetGlobalObject (ctx);
 
-    // Register C accessor functions if not already done. They live on
-    // globalThis so all scripts can reach them through their proxies.
-    JSValue getVis = JS_NewCFunction (ctx, js_getLayerVisible, "__getLayerVisible", 1);
-    JSValue setVis = JS_NewCFunction (ctx, js_setLayerVisible, "__setLayerVisible", 2);
-    JSValue getA = JS_NewCFunction (ctx, js_getLayerAlpha, "__getLayerAlpha", 1);
-    JSValue setA = JS_NewCFunction (ctx, js_setLayerAlpha, "__setLayerAlpha", 2);
-    JS_SetPropertyStr (ctx, globalObj, "__getLayerVisible", getVis);
-    JS_SetPropertyStr (ctx, globalObj, "__setLayerVisible", setVis);
-    JS_SetPropertyStr (ctx, globalObj, "__getLayerAlpha", getA);
-    JS_SetPropertyStr (ctx, globalObj, "__setLayerAlpha", setA);
+    // C accessor functions (__getLayerVisible/setLayerVisible/getLayerAlpha/
+    // setLayerAlpha/ensureSceneRegistry) are registered once in the
+    // ScriptEngine constructor and persist on globalThis. We only need
+    // to (re)build the layer proxy map here.
 
     // Build the __sceneLayers map: { layerName: { __id, get visible, set visible, get alpha, set alpha } }.
     // Also build __sceneLayersByIndex (array) and __sceneLayerCount so scripts
