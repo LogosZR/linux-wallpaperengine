@@ -84,7 +84,15 @@ public:
 	    return std::nullopt;
 	}
 
-	return *it;
+	// Implicit JSON-to-T conversion can throw nlohmann::json::type_error
+	// (e.g. asking for int when the JSON value is a string). Swallowing
+	// here keeps the noexcept contract honest — callers either get the
+	// converted value or nullopt, never a process termination.
+	try {
+	    return *it;
+	} catch (...) {
+	    return std::nullopt;
+	}
     }
     template <typename T> [[nodiscard]] T optional (const std::string& key, T defaultValue) const noexcept {
 	auto base = this->base ();
@@ -94,7 +102,15 @@ public:
 	    return defaultValue;
 	}
 
-	return (*it);
+	// Same as above: tolerate type mismatches by falling back to the
+	// caller's default. WPE wallpapers are full of fields where one
+	// wallpaper uses int and another uses string-formatted vec2 (e.g.
+	// `padding`), so we'd rather absorb the difference than crash.
+	try {
+	    return (*it);
+	} catch (...) {
+	    return defaultValue;
+	}
     }
     [[nodiscard]] UserSettingUniquePtr user (const std::string& key, const Properties& properties) const;
     template <typename T>
