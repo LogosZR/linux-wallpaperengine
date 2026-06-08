@@ -324,10 +324,12 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "        registerAudioBuffers: function(resolution) {\n"
 	    << "          resolution = resolution || 64;\n"
 	    << "          var left = new Array(resolution); var right = new Array(resolution); var avg = new Array(resolution);\n"
-	    << "          for (var i = 0; i < resolution; i++) { left[i] = 0; right[i] = 0; avg[i] = 0; }\n"
-	    // Hybrid shape: works for both array-destructure consumers
-	    // (`var [l, r] = engine.registerAudioBuffers()`) and property-style
-	    // consumers (`audioBuffer.average[i]`, `audioBuffer.left[i]`).
+	    // Fill .average with 1.0 (max signal) so audio-reactive scripts
+	    // (`return initialValue * smoothValue`) pass through their slider
+	    // value. With 0.0 their output collapses to zero, killing the
+	    // effect entirely. left/right FFT bins stay at zero so audio
+	    // visualizers don't draw garbage bars.
+	    << "          for (var i = 0; i < resolution; i++) { left[i] = 0; right[i] = 0; avg[i] = 1.0; }\n"
 	    << "          var result = [left, right];\n"
 	    << "          result.average = avg;\n"
 	    << "          result.left = left;\n"
@@ -548,7 +550,7 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "    registerAudioBuffers: function(res) {\n"
 	    << "      res = res || 64;\n"
 	    << "      var left = new Array(res); var right = new Array(res); var avg = new Array(res);\n"
-	    << "      for(var i=0;i<res;i++){ left[i]=0; right[i]=0; avg[i]=0; }\n"
+	    << "      for(var i=0;i<res;i++){ left[i]=0; right[i]=0; avg[i]=1.0; }\n"
 	    << "      var result = [left, right];\n"
 	    << "      result.average = avg;\n"
 	    << "      result.left = left;\n"
