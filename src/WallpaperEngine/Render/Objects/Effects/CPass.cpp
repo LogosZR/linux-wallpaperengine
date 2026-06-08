@@ -46,6 +46,21 @@ CPass::CPass (
 }
 
 CPass::~CPass () {
+    // Detach all DynamicValue listeners before our `this` becomes invalid.
+    // Listeners were registered in addUniform(ShaderVariable*, DynamicValue*)
+    // to keep user-setting-bound uniforms live across property changes.
+    for (auto& deregister : this->m_uniformDeregisters) {
+	if (deregister) {
+	    try {
+		deregister ();
+	    } catch (...) {
+		// Swallow — destructor must not throw, and a stale listener entry
+		// is recoverable on the DynamicValue side.
+	    }
+	}
+    }
+    this->m_uniformDeregisters.clear ();
+
     // destroy shader programs
     if (!glIsProgram(this->m_programID)) return; // program already invalid or deleted
 
@@ -809,6 +824,40 @@ void CPass::addUniform (const ShaderVariable* value, const DynamicValue* setting
     } else {
 	sLog.error ("Cannot convert setting dynamic value  to ", value->getName (), ". Using default value");
     }
+
+    // Bind a listener so property changes (user slider, script-driven
+    // mutation, override propagation) refresh this uniform's stored
+    // value live. Without this, the uniform captures a snapshot at
+    // setup time and never updates — user-tuned shader parameters
+    // (shake speed, etc.) get stuck on whatever was current when the
+    // pass was first built. addUniform's insert_or_assign overwrites
+    // the prior entry's allocated memory, so the next setupRenderUniforms
+    // call uploads the new value.
+    //
+    // listen() is non-const but doesn't mutate observable DynamicValue
+    // state (only the listener side-channel), so casting away const here
+    // is safe. The deregister lambda is stored in m_uniformDeregisters
+    // and invoked from ~CPass to detach before the DynamicValue's
+    // lifetime ends — prevents stale `this` access if the pass dies
+    // first.
+    auto* mutableSetting = const_cast<DynamicValue*> (setting);
+    auto deregister = mutableSetting->listen ([this, value, mutableSetting] (const DynamicValue&) {
+	// Re-dispatch by shader variable type. The setting's underlying
+	// scalar/vector value has already been updated by the time the
+	// listener fires; just re-read and re-bind.
+	if (value->is<ShaderVariableFloat> ()) {
+	    this->addUniform (value->getName (), mutableSetting->getFloat ());
+	} else if (value->is<ShaderVariableInteger> ()) {
+	    this->addUniform (value->getName (), mutableSetting->getInt ());
+	} else if (value->is<ShaderVariableVector2> ()) {
+	    this->addUniform (value->getName (), mutableSetting->getVec2 ());
+	} else if (value->is<ShaderVariableVector3> ()) {
+	    this->addUniform (value->getName (), mutableSetting->getVec3 ());
+	} else if (value->is<ShaderVariableVector4> ()) {
+	    this->addUniform (value->getName (), mutableSetting->getVec4 ());
+	}
+    });
+    this->m_uniformDeregisters.push_back (std::move (deregister));
 }
 
 void CPass::addUniform (const std::string& name, int value) { this->addUniform (name, UniformType::Integer, value); }

@@ -167,6 +167,12 @@ private:
     std::vector<AttribEntry*> m_attribs = {};
     std::map<std::string, UniformEntry*> m_uniforms = {};
     std::map<std::string, ReferenceUniformEntry*> m_referenceUniforms = {};
+    // Deregister callbacks for DynamicValue listeners attached when binding
+    // user-setting uniforms. Property changes (e.g., shake speed slider, or
+    // a script setting layer.alpha) re-fire addUniform so the live uniform
+    // memory tracks the current value. Each entry must be invoked from
+    // ~CPass to detach before the DynamicValue lookup table is destroyed.
+    std::vector<std::function<void ()>> m_uniformDeregisters = {};
     BlendingMode m_blendingmode = BlendingMode_Normal;
     const glm::mat4* m_modelViewProjectionMatrix;
     const glm::mat4* m_modelViewProjectionMatrixInverse;
