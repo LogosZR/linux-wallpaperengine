@@ -360,7 +360,12 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "          addCombo:    function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
 	    << "          addColor:    function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
 	    << "          addText:     function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
-	    << "          finish:      function(){ return globalThis.__scriptProps || {}; }\n"
+	    // finish() returns a Proxy that always resolves reads against the
+	    // CURRENT globalThis.__scriptProps. The persistent closure captures
+	    // scriptProperties once, but C++ rebuilds __scriptProps each
+	    // evaluation — without the proxy, scriptProperties.X reads stale
+	    // values from the FIRST eval forever.
+	    << "          finish:      function(){ return new Proxy({}, { get: function(_, k) { return (globalThis.__scriptProps || {})[k]; }, set: function(_, k, v) { if (globalThis.__scriptProps) globalThis.__scriptProps[k] = v; return true; }, has: function(_, k) { return globalThis.__scriptProps ? (k in globalThis.__scriptProps) : false; } }); }\n"
 	    << "        };\n"
 	    << "        return builder;\n"
 	    << "      }\n";
