@@ -90,10 +90,23 @@ UserSettingUniquePtr UserSettingParser::parse (const json& data, const Propertie
 	    }
 	}
 
+	// Many scripts read `engine.userProperties.X` without declaring an
+	// explicit `scriptProperties` block. Hand the entire project property
+	// map to ScriptedDynamicValue as a watch list so any property change
+	// triggers a re-evaluation, and the script's `engine.userProperties`
+	// is fully populated. Watch entries are non-owning raw pointers.
+	std::map<std::string, DynamicValue*> watchProperties;
+	for (const auto& [name, prop] : properties) {
+	    if (prop) {
+		watchProperties[name] = prop.get ();
+	    }
+	}
+
 	value = std::make_unique<ScriptedDynamicValue> (
 	    std::move (scriptSource.value ()),
 	    std::move (scriptProps),
-	    std::move (*value)
+	    std::move (*value),
+	    std::move (watchProperties)
 	);
     }
 
