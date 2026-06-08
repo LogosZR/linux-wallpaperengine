@@ -4,6 +4,7 @@
 #include "WallpaperEngine/Render/Objects/CText.h"
 
 #include "WallpaperEngine/Render/WallpaperState.h"
+#include "WallpaperEngine/Scripting/ScriptEngine.h"
 
 #include "CScene.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -135,9 +136,19 @@ CScene::CScene (
 
 	this->m_objectsByRenderOrder.push_back (this->m_bloomObject);
     }
+
+    // Register this scene as the active context for thisScene.getLayer()
+    // lookups in the JS scripting engine. Property scripts that fire from
+    // ScriptedDynamicValue::reevaluate() expect to resolve layer names
+    // against THIS scene's m_objects. Done last so all objects are present.
+    Scripting::ScriptEngine::instance ().setScene (this);
 }
 
 CScene::~CScene () {
+    // Tear down the JS layer registry first so any in-flight scripts that
+    // reference layers don't see dangling pointers.
+    Scripting::ScriptEngine::instance ().clearScene ();
+
     // bloom object is in the objects list, so no need to explicitly delete it
     this->m_bloomObject = nullptr;
 

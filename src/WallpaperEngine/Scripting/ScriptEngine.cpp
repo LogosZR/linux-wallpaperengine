@@ -1,10 +1,18 @@
 #include "ScriptEngine.h"
 #include "WallpaperEngine/Logging/Log.h"
+#include "WallpaperEngine/Render/Wallpapers/CScene.h"
+#include "WallpaperEngine/Render/CObject.h"
+#include "WallpaperEngine/Render/Objects/CImage.h"
+#include "WallpaperEngine/Data/Model/Object.h"
 
+#include <cstdio>
 #include <sstream>
 
 using namespace WallpaperEngine::Scripting;
 using namespace WallpaperEngine::Data::Model;
+using WallpaperEngine::Render::CObject;
+using WallpaperEngine::Render::Objects::CImage;
+using WallpaperEngine::Render::Wallpapers::CScene;
 
 static std::unique_ptr<ScriptEngine> sScriptEngine;
 
@@ -274,6 +282,28 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "    setTimeout: function(fn, ms) { /* no-op */ },\n"
 	    << "    userProperties: __props,\n"
 	    << "  };\n"
+	    // ── thisScene shim with getLayer support ────────────────────────
+	    // For evaluate() (property scripts), we don't have time/dt context,
+	    // so thisScene is minimal — just getLayer for cross-layer mutation.
+	    << "  var thisScene = {\n"
+	    << "    getLayer: function(name) {\n"
+	    << "      var l = globalThis.__sceneLayers;\n"
+	    << "      return (l && l[name]) ? l[name] : null;\n"
+	    << "    }\n"
+	    << "  };\n"
+	    // ── thisLayer stub for property scripts ────────────────────
+	    // Property scripts (visible: {script: ...}) sometimes reference
+	    // thisLayer.origin / thisLayer.visible to mutate the host layer.
+	    // We don't know the host id at parse time without plumbing changes,
+	    // so for now we stub a free-standing object. Writes to the stub
+	    // are silently lost (no host mutation) but the script runs to its
+	    // important logic (thisScene.getLayer(...) toggles).
+	    << "  var thisLayer = {\n"
+	    << "    visible: true,\n"
+	    << "    alpha: 1.0,\n"
+	    << "    origin: { x: 0, y: 0, z: 0 },\n"
+	    << "    text: ''\n"
+	    << "  };\n"
 	    // ── Vec3 class stub ─────────────────────────────────────────────
 	    << "  function Vec3(x, y, z) { this.x = x||0; this.y = y||0; this.z = z||0; }\n"
 	    << "  Vec3.prototype.toString = function() { return this.x+' '+this.y+' '+this.z; };\n"
@@ -430,6 +460,10 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "    get currentTime() { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
 	    << "    get dt()          { var c = globalThis.__sceneCtx; return c ? c.dt   : 0; },\n"
 	    << "    get fps()         { var c = globalThis.__sceneCtx; return c ? c.fps  : 60; },\n"
+	    << "    getLayer: function(name) {\n"
+	    << "      var l = globalThis.__sceneLayers;\n"
+	    << "      return (l && l[name]) ? l[name] : null;\n"
+	    << "    }\n"
 	    << "  };\n"
 	    // Minimal WE `engine` shim. Real Wallpaper Engine exposes a broad API
 	    // (media events, audio buffer, user input); we provide just enough for
@@ -615,4 +649,263 @@ void ScriptEngine::destroyLayer (ScriptLayerHandle handle) {
     JS_FreeValue (ctx, delResult);
 
     this->m_layerInitialized.erase (handle);
+}
+
+// ---------------------------------------------------------------------------
+// Scene-aware API (Phase 4)
+// ---------------------------------------------------------------------------
+//
+// WPE scripts use `thisScene.getLayer(name).visible = true/false` to toggle
+// other layers' visibility from a script attached to one object's `visible`
+// field. To support this we need the scripting engine to know which scene
+// is active, so it can resolve names to CObjects and mutate their backing
+// UserSetting DynamicValues.
+//
+// The C-side functions below are exposed to QuickJS via JS_NewCFunction.
+// The JS side builds proxy objects (one per layer) whose `visible`/`alpha`
+// getters/setters call into these.
+
+namespace {
+
+// Helper: pull the singleton out of QuickJS context. Static so we can
+// reference it from extern "C"-style C callbacks.
+ScriptEngine& engineForCallback () {
+    return ScriptEngine::instance ();
+}
+
+// JS: __getLayerVisible(id) -> bool
+JSValue js_getLayerVisible (JSContext* ctx, JSValueConst /*this_val*/, int argc, JSValueConst* argv) {
+    if (argc < 1) {
+	return JS_FALSE;
+    }
+    int32_t id = 0;
+    if (JS_ToInt32 (ctx, &id, argv[0]) != 0) {
+	return JS_FALSE;
+    }
+    return JS_NewBool (ctx, engineForCallback ().getLayerVisible (id));
+}
+
+// JS: __setLayerVisible(id, value) -> undefined
+JSValue js_setLayerVisible (JSContext* ctx, JSValueConst /*this_val*/, int argc, JSValueConst* argv) {
+    if (argc < 2) {
+	return JS_UNDEFINED;
+    }
+    int32_t id = 0;
+    if (JS_ToInt32 (ctx, &id, argv[0]) != 0) {
+	return JS_UNDEFINED;
+    }
+    const bool val = JS_ToBool (ctx, argv[1]) == 1;
+    engineForCallback ().setLayerVisible (id, val);
+    return JS_UNDEFINED;
+}
+
+// JS: __getLayerAlpha(id) -> number
+JSValue js_getLayerAlpha (JSContext* ctx, JSValueConst /*this_val*/, int argc, JSValueConst* argv) {
+    if (argc < 1) {
+	return JS_NewFloat64 (ctx, 1.0);
+    }
+    int32_t id = 0;
+    if (JS_ToInt32 (ctx, &id, argv[0]) != 0) {
+	return JS_NewFloat64 (ctx, 1.0);
+    }
+    return JS_NewFloat64 (ctx, engineForCallback ().getLayerAlpha (id));
+}
+
+// JS: __setLayerAlpha(id, value) -> undefined
+JSValue js_setLayerAlpha (JSContext* ctx, JSValueConst /*this_val*/, int argc, JSValueConst* argv) {
+    if (argc < 2) {
+	return JS_UNDEFINED;
+    }
+    int32_t id = 0;
+    if (JS_ToInt32 (ctx, &id, argv[0]) != 0) {
+	return JS_UNDEFINED;
+    }
+    double val = 1.0;
+    if (JS_ToFloat64 (ctx, &val, argv[1]) != 0) {
+	val = 1.0;
+    }
+    engineForCallback ().setLayerAlpha (id, static_cast<float> (val));
+    return JS_UNDEFINED;
+}
+
+} // anonymous namespace
+
+void ScriptEngine::setScene (CScene* scene) {
+    this->m_currentScene = scene;
+    if (this->m_context && scene != nullptr) {
+	this->buildSceneLayerRegistry ();
+    }
+}
+
+void ScriptEngine::clearScene () {
+    if (this->m_context && this->m_sceneRegistryReady) {
+	this->teardownSceneLayerRegistry ();
+    }
+    this->m_currentScene = nullptr;
+}
+
+int ScriptEngine::findObjectIdByName (const std::string& name) const {
+    if (this->m_currentScene == nullptr) {
+	return 0;
+    }
+    for (const auto* obj : this->m_currentScene->getObjectsByRenderOrder ()) {
+	if (obj == nullptr) {
+	    continue;
+	}
+	if (obj->getObject ().name == name) {
+	    return obj->getId ();
+	}
+    }
+    return 0;
+}
+
+bool ScriptEngine::getLayerVisible (int objectId) const {
+    if (this->m_currentScene == nullptr) {
+	return false;
+    }
+    const CObject* obj = this->m_currentScene->getObject (objectId);
+    if (obj == nullptr) {
+	return false;
+    }
+    // Image is the most common case for getLayer toggling. Others can be
+    // added later (Sound, Particle, Text) but visibility on those is rare.
+    if (obj->is<CImage> ()) {
+	const auto& image = obj->as<CImage> ()->getImage ();
+	if (image.visible && image.visible->value) {
+	    return image.visible->value->getBool ();
+	}
+    }
+    return false;
+}
+
+void ScriptEngine::setLayerVisible (int objectId, bool value) {
+    if (this->m_currentScene == nullptr) {
+	return;
+    }
+    const CObject* obj = this->m_currentScene->getObject (objectId);
+    if (obj == nullptr) {
+	return;
+    }
+    if (obj->is<CImage> ()) {
+	const auto& image = obj->as<CImage> ()->getImage ();
+	if (image.visible && image.visible->value) {
+	    image.visible->value->update (value);
+	}
+    }
+}
+
+float ScriptEngine::getLayerAlpha (int objectId) const {
+    if (this->m_currentScene == nullptr) {
+	return 1.0f;
+    }
+    const CObject* obj = this->m_currentScene->getObject (objectId);
+    if (obj == nullptr) {
+	return 1.0f;
+    }
+    if (obj->is<CImage> ()) {
+	const auto& image = obj->as<CImage> ()->getImage ();
+	if (image.alpha && image.alpha->value) {
+	    return image.alpha->value->getFloat ();
+	}
+    }
+    return 1.0f;
+}
+
+void ScriptEngine::setLayerAlpha (int objectId, float value) {
+    if (this->m_currentScene == nullptr) {
+	return;
+    }
+    const CObject* obj = this->m_currentScene->getObject (objectId);
+    if (obj == nullptr) {
+	return;
+    }
+    if (obj->is<CImage> ()) {
+	const auto& image = obj->as<CImage> ()->getImage ();
+	if (image.alpha && image.alpha->value) {
+	    image.alpha->value->update (value);
+	}
+    }
+}
+
+void ScriptEngine::buildSceneLayerRegistry () {
+    if (!this->m_context || this->m_currentScene == nullptr) {
+	return;
+    }
+    JSContext* ctx = this->m_context;
+    JSValue globalObj = JS_GetGlobalObject (ctx);
+
+    // Register C accessor functions if not already done. They live on
+    // globalThis so all scripts can reach them through their proxies.
+    JSValue getVis = JS_NewCFunction (ctx, js_getLayerVisible, "__getLayerVisible", 1);
+    JSValue setVis = JS_NewCFunction (ctx, js_setLayerVisible, "__setLayerVisible", 2);
+    JSValue getA = JS_NewCFunction (ctx, js_getLayerAlpha, "__getLayerAlpha", 1);
+    JSValue setA = JS_NewCFunction (ctx, js_setLayerAlpha, "__setLayerAlpha", 2);
+    JS_SetPropertyStr (ctx, globalObj, "__getLayerVisible", getVis);
+    JS_SetPropertyStr (ctx, globalObj, "__setLayerVisible", setVis);
+    JS_SetPropertyStr (ctx, globalObj, "__getLayerAlpha", getA);
+    JS_SetPropertyStr (ctx, globalObj, "__setLayerAlpha", setA);
+
+    // Build the __sceneLayers map: { layerName: { __id, get visible, set visible, get alpha, set alpha } }.
+    // We construct it via JS rather than the C API because property
+    // descriptors with getters/setters are easier in JS syntax.
+    std::ostringstream js;
+    js << "globalThis.__sceneLayers = {};\n"
+       << "globalThis.__buildLayerProxy = function(id) {\n"
+       << "  return {\n"
+       << "    __id: id,\n"
+       << "    get visible() { return globalThis.__getLayerVisible(id); },\n"
+       << "    set visible(v) { globalThis.__setLayerVisible(id, v ? true : false); },\n"
+       << "    get alpha()   { return globalThis.__getLayerAlpha(id); },\n"
+       << "    set alpha(v)  { globalThis.__setLayerAlpha(id, v); }\n"
+       << "  };\n"
+       << "};\n";
+
+    for (const auto* obj : this->m_currentScene->getObjectsByRenderOrder ()) {
+	if (obj == nullptr) {
+	    continue;
+	}
+	const std::string& name = obj->getObject ().name;
+	if (name.empty ()) {
+	    continue;
+	}
+	// Escape quotes/backslashes in the name so JS object key is safe.
+	std::string safe;
+	safe.reserve (name.size () + 4);
+	for (char c : name) {
+	    if (c == '\\' || c == '"' || c == '\'') {
+		safe.push_back ('\\');
+	    }
+	    safe.push_back (c);
+	}
+	js << "globalThis.__sceneLayers['" << safe << "'] = globalThis.__buildLayerProxy ("
+	   << obj->getId () << ");\n";
+    }
+
+    const std::string boot = js.str ();
+    JSValue result = JS_Eval (ctx, boot.c_str (), boot.size (), "<scene-layer-registry>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException (result)) {
+	JSValue exception = JS_GetException (ctx);
+	const char* msg = JS_ToCString (ctx, exception);
+	sLog.error ("ScriptEngine::buildSceneLayerRegistry exception: ", msg ? msg : "(null)");
+	if (msg) {
+	    JS_FreeCString (ctx, msg);
+	}
+	JS_FreeValue (ctx, exception);
+    }
+    JS_FreeValue (ctx, result);
+
+    JS_FreeValue (ctx, globalObj);
+
+    this->m_sceneRegistryReady = true;
+}
+
+void ScriptEngine::teardownSceneLayerRegistry () {
+    if (!this->m_context) {
+	return;
+    }
+    JSContext* ctx = this->m_context;
+    JSValue globalObj = JS_GetGlobalObject (ctx);
+    JS_SetPropertyStr (ctx, globalObj, "__sceneLayers", JS_UNDEFINED);
+    JS_FreeValue (ctx, globalObj);
+    this->m_sceneRegistryReady = false;
 }

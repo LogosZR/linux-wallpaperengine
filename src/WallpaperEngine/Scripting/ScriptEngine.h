@@ -11,6 +11,11 @@ extern "C" {
 #include "quickjs.h"
 }
 
+// Forward decl to avoid pulling Render headers into Scripting layer.
+namespace WallpaperEngine::Render::Wallpapers {
+class CScene;
+}
+
 namespace WallpaperEngine::Scripting {
 using namespace WallpaperEngine::Data::Model;
 
@@ -94,6 +99,49 @@ public:
      */
     void destroyLayer (ScriptLayerHandle handle);
 
+    // -------------------------------------------------------------------
+    // Scene-aware API (Phase 4 — thisScene.getLayer)
+    // -------------------------------------------------------------------
+    //
+    // WPE scripts use `thisScene.getLayer(name)` to look up another object
+    // in the same scene and mutate its visibility/alpha at runtime. We
+    // need the engine to know which scene is currently active so it can
+    // resolve names to CObjects and mutate their backing UserSetting
+    // DynamicValues.
+    //
+    // The lifecycle: the scene calls setScene(this) once after objects
+    // are populated, and clearScene() in its destructor. Between those
+    // calls, getLayer() resolves names against this scene's m_objects.
+    //
+    // For simplicity (single wallpaper at a time), we keep one current
+    // scene at a time. If multi-monitor with different wallpapers ever
+    // calls evaluate() from two scenes, this becomes a stack — but today
+    // every wallpaper has its own background id and scenes don't overlap
+    // in the same eval call.
+
+    /**
+     * Make this scene the active context for thisScene.getLayer() lookups.
+     * Builds the JS-side layer registry (globalThis.__sceneLayers) and
+     * registers the C↔JS visible/alpha accessor functions.
+     */
+    void setScene (Render::Wallpapers::CScene* scene);
+
+    /** Clear the active scene and tear down the JS layer registry. */
+    void clearScene ();
+
+    /**
+     * Resolve a layer name to its CObject id within the active scene.
+     * Returns 0 if no scene is active or the name doesn't match.
+     * Used by the JS↔C accessor callbacks.
+     */
+    int findObjectIdByName (const std::string& name) const;
+
+    /** Read/write helpers used by the JS proxy callbacks. */
+    bool getLayerVisible (int objectId) const;
+    void setLayerVisible (int objectId, bool value);
+    float getLayerAlpha (int objectId) const;
+    void setLayerAlpha (int objectId, float value);
+
 private:
     ScriptEngine ();
 
@@ -103,10 +151,17 @@ private:
     // Installs globalThis.__layers and related helpers. Called lazily.
     void ensureLayerRegistry ();
 
+    // Installs the __getLayerVisible / __setLayerVisible / __sceneLayers
+    // bootstrap into the JS context. Called from setScene().
+    void buildSceneLayerRegistry ();
+    void teardownSceneLayerRegistry ();
+
     JSRuntime* m_runtime = nullptr;
     JSContext* m_context = nullptr;
     ScriptLayerHandle m_nextLayerId = 1;
     bool m_layerRegistryReady = false;
+    bool m_sceneRegistryReady = false;
     std::map<ScriptLayerHandle, bool> m_layerInitialized;
+    Render::Wallpapers::CScene* m_currentScene = nullptr;
 };
 } // namespace WallpaperEngine::Scripting
