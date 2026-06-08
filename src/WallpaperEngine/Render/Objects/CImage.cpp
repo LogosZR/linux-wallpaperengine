@@ -520,6 +520,36 @@ void CImage::render () {
 	return;
     }
 
+    // Cascade parent visibility. WPE editor scenes nest layers under group
+    // objects (TOG/TOG1/TOG Big/etc.) and toggle the parent's visibility
+    // to show/hide the whole subtree. Without this walk, lwe renders every
+    // child regardless of the parent state, so wallpapers that group outfits
+    // by parent end up showing all outfits simultaneously. Walk up the chain
+    // and bail out if any ancestor is invisible. Cycle protection via a
+    // depth cap (scene depth >32 is unrealistic; trims runaway parent loops).
+    {
+	int depth = 0;
+	std::optional<int> parentId = this->m_image.parent;
+	while (parentId.has_value () && depth++ < 32) {
+	    const auto* parent = this->getScene ().getObject (parentId.value ());
+	    if (parent == nullptr) {
+		break;
+	    }
+	    // Only Image-typed objects carry a `visible` UserSetting that we can
+	    // read here. Other parent types (Sound/Particle) don't gate visuals.
+	    if (parent->is<CImage> ()) {
+		const auto& parentImage = parent->as<CImage> ()->getImage ();
+		if (parentImage.visible && parentImage.visible->value &&
+		    !parentImage.visible->value->getBool ()) {
+		    return;
+		}
+		parentId = parentImage.parent;
+	    } else {
+		parentId = parent->getObject ().parent;
+	    }
+	}
+    }
+
     glColorMask (true, true, true, true);
 
     // Always update screen transform (handles rotation + parallax dynamically)
