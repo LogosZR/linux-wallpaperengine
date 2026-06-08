@@ -282,19 +282,28 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    << "    setTimeout: function(fn, ms) { /* no-op */ },\n"
 	    << "    userProperties: __props,\n"
 	    << "  };\n"
+	    // ── console stub ───────────────────────────────────────────────
+	    // WPE scripts use console.log liberally for debugging. Stub it out;
+	    // we don't surface logs to the host yet.
+	    << "  var console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };\n"
 	    // ── thisScene shim with getLayer support ────────────────────────
 	    // For evaluate() (property scripts), we don't have time/dt context,
 	    // so thisScene is minimal — just getLayer for cross-layer mutation.
 	    // getLayer accepts both string names and numeric indices, matching
 	    // WPE editor conventions where init() iterates by index.
+	    // On miss, return a no-op stub instead of null so script writes
+	    // (`getLayer('foo').visible = true`) don't crash during the early
+	    // window before the scene registry is built (initial property parse
+	    // happens before CScene::setScene() runs).
+	    << "  var __layerStub = { __id: 0, name: '', visible: false, alpha: 1.0 };\n"
 	    << "  var thisScene = {\n"
 	    << "    getLayer: function(arg) {\n"
 	    << "      if (typeof arg === 'number') {\n"
 	    << "        var arr = globalThis.__sceneLayersByIndex;\n"
-	    << "        return (arr && arr[arg]) ? arr[arg] : null;\n"
+	    << "        return (arr && arr[arg]) ? arr[arg] : __layerStub;\n"
 	    << "      }\n"
 	    << "      var l = globalThis.__sceneLayers;\n"
-	    << "      return (l && l[arg]) ? l[arg] : null;\n"
+	    << "      return (l && l[arg]) ? l[arg] : __layerStub;\n"
 	    << "    },\n"
 	    << "    getLayerCount: function() {\n"
 	    << "      return globalThis.__sceneLayerCount || 0;\n"
@@ -474,6 +483,8 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "  var __id = " << id << ";\n"
 	    << "  var __props = Object.assign({}, globalThis.__layerSeedProps || {});\n"
 	    << "  var thisLayer = { text: String(globalThis.__layerSeedText || '') };\n"
+	    << "  var __layerStub = { __id: 0, name: '', visible: false, alpha: 1.0 };\n"
+	    << "  var console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };\n"
 	    << "  var thisScene = {\n"
 	    << "    get time()        { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
 	    << "    get currentTime() { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
@@ -482,10 +493,10 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "    getLayer: function(arg) {\n"
 	    << "      if (typeof arg === 'number') {\n"
 	    << "        var arr = globalThis.__sceneLayersByIndex;\n"
-	    << "        return (arr && arr[arg]) ? arr[arg] : null;\n"
+	    << "        return (arr && arr[arg]) ? arr[arg] : __layerStub;\n"
 	    << "      }\n"
 	    << "      var l = globalThis.__sceneLayers;\n"
-	    << "      return (l && l[arg]) ? l[arg] : null;\n"
+	    << "      return (l && l[arg]) ? l[arg] : __layerStub;\n"
 	    << "    },\n"
 	    << "    getLayerCount: function() {\n"
 	    << "      return globalThis.__sceneLayerCount || 0;\n"
