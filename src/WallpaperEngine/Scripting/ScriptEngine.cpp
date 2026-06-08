@@ -248,7 +248,8 @@ static void logJSException (JSContext* ctx, const char* context) {
 DynamicValueUniquePtr ScriptEngine::evaluate (
     const std::string& scriptSource,
     const std::map<std::string, DynamicValue*>& scriptProperties,
-    const DynamicValue& currentValue
+    const DynamicValue& currentValue,
+    int instanceId
 ) {
     if (!this->m_context) {
 	sLog.error ("ScriptEngine: No JS context available");
@@ -290,136 +291,121 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 
     // Create the builder as a JS object with fluent methods
     // that ultimately resolves to the propsObj
+    // The wrapper has two shapes:
+    //
+    //   instanceId > 0  → persistent closure. Top-level vars (e.g. cycle
+    //                     counters, debounce flags) survive across evals so
+    //                     timer-driven scripts accumulate state correctly.
+    //                     Built lazily on first eval and reused thereafter.
+    //
+    //   instanceId == 0 → fresh IIFE per call (legacy behavior, used by
+    //                     callers that don't need state continuity).
+    //
+    // In both shapes engine.userProperties / __props are live getters that
+    // resolve to globalThis.__scriptProps each access, so property updates
+    // visible to subsequent calls don't get masked by closure capture.
     std::ostringstream wrapper;
-    wrapper << "(function() {\n"
-	    << "  var __props = globalThis.__scriptProps;\n"
-	    // ── WPE engine global stub ──────────────────────────────────────
-	    // Wallpaper Engine scripts expect a global `engine` object with
-	    // frametime, registerAudioBuffers, and registerCallback. We stub
-	    // these so scripts don't throw ReferenceError at load time. Audio
-	    // buffers return zeros (audio reactive not yet wired); frametime
-	    // is set per-eval from globalThis.__frametime.
-	    << "  var engine = {\n"
-	    << "    frametime: globalThis.__frametime || 0.016,\n"
-	    << "    runtime: 0,\n"
-	    << "    fps: 30,\n"
-	    << "    registerAudioBuffers: function(resolution) {\n"
-	    << "      resolution = resolution || 64;\n"
-	    << "      var left = new Array(resolution); var right = new Array(resolution);\n"
-	    << "      for (var i = 0; i < resolution; i++) { left[i] = 0; right[i] = 0; }\n"
-	    << "      return [left, right];\n"
-	    << "    },\n"
-	    << "    registerCallback: function(name, fn) { /* no-op */ },\n"
-	    << "    setTimeout: function(fn, ms) { /* no-op */ },\n"
-	    << "    userProperties: __props,\n"
-	    << "  };\n"
-	    // ── console stub ───────────────────────────────────────────────
-	    // WPE scripts use console.log liberally for debugging. Stub it out;
-	    // we don't surface logs to the host yet.
-	    << "  var console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };\n"
-	    // ── thisScene shim with getLayer support ────────────────────────
-	    // For evaluate() (property scripts), we don't have time/dt context,
-	    // so thisScene is minimal — just getLayer for cross-layer mutation.
-	    // getLayer accepts both string names and numeric indices, matching
-	    // WPE editor conventions where init() iterates by index.
-	    // On miss, return a no-op stub instead of null so script writes
-	    // (`getLayer('foo').visible = true`) don't crash during the early
-	    // window before the scene registry is built (initial property parse
-	    // happens before CScene::setScene() runs).
-	    << "  var __layerStub = { __id: 0, name: '', visible: false, alpha: 1.0 };\n"
-	    << "  var thisScene = {\n"
-	    << "    getLayer: function(arg) {\n"
-	    << "      if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
-	    << "      if (typeof arg === 'number') {\n"
-	    << "        var arr = globalThis.__sceneLayersByIndex;\n"
-	    << "        return (arr && arr[arg]) ? arr[arg] : __layerStub;\n"
-	    << "      }\n"
-	    << "      var l = globalThis.__sceneLayers;\n"
-	    << "      return (l && l[arg]) ? l[arg] : __layerStub;\n"
-	    << "    },\n"
-	    << "    getLayerCount: function() {\n"
-	    << "      if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
-	    << "      return globalThis.__sceneLayerCount || 0;\n"
-	    << "    }\n"
-	    << "  };\n"
-	    // ── thisLayer stub for property scripts ────────────────────
-	    // Property scripts (visible: {script: ...}) sometimes reference
-	    // thisLayer.origin / thisLayer.visible to mutate the host layer.
-	    // We don't know the host id at parse time without plumbing changes,
-	    // so for now we stub a free-standing object. Writes to the stub
-	    // are silently lost (no host mutation) but the script runs to its
-	    // important logic (thisScene.getLayer(...) toggles).
-	    << "  var thisLayer = {\n"
-	    << "    visible: true,\n"
-	    << "    alpha: 1.0,\n"
-	    << "    origin: { x: 0, y: 0, z: 0 },\n"
-	    << "    text: ''\n"
-	    << "  };\n"
-	    // ── Vec3 class stub ─────────────────────────────────────────────
-	    << "  function Vec3(x, y, z) { this.x = x||0; this.y = y||0; this.z = z||0; }\n"
-	    << "  Vec3.prototype.toString = function() { return this.x+' '+this.y+' '+this.z; };\n"
-	    // ── Shared/MediaPlaybackEvent stubs ─────────────────────────────
-	    << "  var shared = {};\n"
-	    << "  var MediaPlaybackEvent = { state: 0 };\n"
-	    // ────────────────────────────────────────────────────────────────
-	    << "  function createScriptProperties() {\n"
-	    << "    var builder = {\n"
-	    << "      addSlider: function(opts) {\n"
-	    << "        if (!(opts.name in __props)) __props[opts.name] = opts.value;\n"
+    if (instanceId > 0) {
+	wrapper << "(function() {\n"
+		<< "  var __instKey = '__scriptInst_" << instanceId << "';\n"
+		<< "  if (!globalThis[__instKey]) {\n"
+		<< "    globalThis[__instKey] = (function() {\n"
+		<< "      var __props = new Proxy({}, { get: function(_, k) { return globalThis.__scriptProps ? globalThis.__scriptProps[k] : undefined; } });\n";
+    } else {
+	wrapper << "(function() {\n"
+		<< "  var __props = globalThis.__scriptProps;\n";
+    }
+    wrapper << "      var engine = {\n"
+	    << "        get frametime() { var c = globalThis.__sceneCtx; return c ? c.dt : 0.016; },\n"
+	    << "        get runtime()   { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
+	    << "        get time()      { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
+	    << "        get fps()       { var c = globalThis.__sceneCtx; return c ? c.fps : 30; },\n"
+	    << "        get userProperties() { return globalThis.__scriptProps || {}; },\n"
+	    << "        registerAudioBuffers: function(resolution) {\n"
+	    << "          resolution = resolution || 64;\n"
+	    << "          var left = new Array(resolution); var right = new Array(resolution);\n"
+	    << "          for (var i = 0; i < resolution; i++) { left[i] = 0; right[i] = 0; }\n"
+	    << "          return [left, right];\n"
+	    << "        },\n"
+	    << "        registerCallback: function(name, fn) { /* no-op */ },\n"
+	    << "        setTimeout: function(fn, ms) { /* no-op */ },\n"
+	    << "      };\n"
+	    << "      var console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){}, debug: function(){} };\n"
+	    << "      var __layerStub = { __id: 0, name: '', visible: false, alpha: 1.0 };\n"
+	    << "      var thisScene = {\n"
+	    << "        getLayer: function(arg) {\n"
+	    << "          if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
+	    << "          if (typeof arg === 'number') {\n"
+	    << "            var arr = globalThis.__sceneLayersByIndex;\n"
+	    << "            return (arr && arr[arg]) ? arr[arg] : __layerStub;\n"
+	    << "          }\n"
+	    << "          var l = globalThis.__sceneLayers;\n"
+	    << "          return (l && l[arg]) ? l[arg] : __layerStub;\n"
+	    << "        },\n"
+	    << "        getLayerCount: function() {\n"
+	    << "          if (typeof globalThis.__ensureSceneRegistry === 'function') globalThis.__ensureSceneRegistry();\n"
+	    << "          return globalThis.__sceneLayerCount || 0;\n"
+	    << "        }\n"
+	    << "      };\n"
+	    << "      var thisLayer = { visible: true, alpha: 1.0, origin: { x: 0, y: 0, z: 0 }, text: '' };\n"
+	    << "      function Vec3(x, y, z) { this.x = x||0; this.y = y||0; this.z = z||0; }\n"
+	    << "      Vec3.prototype.toString = function() { return this.x+' '+this.y+' '+this.z; };\n"
+	    << "      var shared = {};\n"
+	    << "      var MediaPlaybackEvent = { state: 0 };\n"
+	    << "      function createScriptProperties() {\n"
+	    << "        var builder = {\n"
+	    << "          addSlider:   function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
+	    << "          addCheckbox: function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
+	    << "          addCombo:    function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
+	    << "          addColor:    function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
+	    << "          addText:     function(o){ if (globalThis.__scriptProps && !(o.name in globalThis.__scriptProps)) globalThis.__scriptProps[o.name] = o.value; return builder; },\n"
+	    << "          finish:      function(){ return globalThis.__scriptProps || {}; }\n"
+	    << "        };\n"
 	    << "        return builder;\n"
-	    << "      },\n"
-	    << "      addCheckbox: function(opts) {\n"
-	    << "        if (!(opts.name in __props)) __props[opts.name] = opts.value;\n"
-	    << "        return builder;\n"
-	    << "      },\n"
-	    << "      addCombo: function(opts) {\n"
-	    << "        if (!(opts.name in __props)) __props[opts.name] = opts.value;\n"
-	    << "        return builder;\n"
-	    << "      },\n"
-	    << "      addColor: function(opts) {\n"
-	    << "        if (!(opts.name in __props)) __props[opts.name] = opts.value;\n"
-	    << "        return builder;\n"
-	    << "      },\n"
-	    << "      addText: function(opts) {\n"
-	    << "        if (!(opts.name in __props)) __props[opts.name] = opts.value;\n"
-	    << "        return builder;\n"
-	    << "      },\n"
-	    << "      finish: function() { return __props; }\n"
-	    << "    };\n"
-	    << "    return builder;\n"
-	    << "  }\n";
+	    << "      }\n";
 
     // Strip 'use strict'; and export keywords, embed the script body
     std::string body = scriptSource;
-
-    // Remove 'use strict'; declarations
-    size_t pos;
-    while ((pos = body.find ("'use strict';")) != std::string::npos) {
-	body.erase (pos, 13);
-    }
-    while ((pos = body.find ("\"use strict\";")) != std::string::npos) {
-	body.erase (pos, 13);
+    {
+	size_t pos;
+	while ((pos = body.find ("'use strict';")) != std::string::npos) body.erase (pos, 13);
+	while ((pos = body.find ("\"use strict\";")) != std::string::npos) body.erase (pos, 13);
+	while ((pos = body.find ("export ")) != std::string::npos) body.erase (pos, 7);
     }
 
-    // Remove export keywords (export var ..., export function ...)
-    while ((pos = body.find ("export ")) != std::string::npos) {
-	body.erase (pos, 7);
+    if (instanceId > 0) {
+	// Persistent-closure shape: the script body runs ONCE inside the
+	// inner IIFE on first eval, capturing top-level vars + function
+	// declarations into the closure. Subsequent evals reuse that closure
+	// and just call its update(currentValue). init() runs once on the
+	// first eval. State (currentIndexLeft, debounce flags, etc.) survives
+	// across calls — critical for cycle/timer scripts.
+	wrapper << body << "\n"
+		<< "      return {\n"
+		<< "        __init: (typeof init === 'function') ? init : null,\n"
+		<< "        __update: (typeof update === 'function') ? update : null,\n"
+		<< "        __initDone: false\n"
+		<< "      };\n"
+		<< "    })();\n"   // close inner IIFE assigned to globalThis[__instKey]
+		<< "  }\n"       // close `if (!globalThis[__instKey])`
+		<< "  var inst = globalThis[__instKey];\n"
+		<< "  if (!inst.__initDone) {\n"
+		<< "    if (inst.__init) { try { inst.__init(); } catch (e) { /* swallow */ } }\n"
+		<< "    inst.__initDone = true;\n"
+		<< "  }\n"
+		<< "  if (inst.__update) return inst.__update(globalThis.__currentValue);\n"
+		<< "  return globalThis.__currentValue;\n"
+		<< "})();\n";   // close outer IIFE
+    } else {
+	// Stateless shape: fresh IIFE per call, no state preservation.
+	wrapper << body << "\n"
+		<< "  if (typeof init === 'function') {\n"
+		<< "    try { init(); } catch (e) { /* init failure non-fatal */ }\n"
+		<< "  }\n"
+		<< "  if (typeof update === 'function') return update(globalThis.__currentValue);\n"
+		<< "  return globalThis.__currentValue;\n"
+		<< "})();\n";
     }
-
-    wrapper << body << "\n"
-	    // Some property scripts split state initialization into init()
-	    // (e.g., iterating thisScene to build layer index arrays) and
-	    // per-frame work into update(). createLayerScript runs init once
-	    // and persists state across ticks; evaluate() runs as a fresh IIFE
-	    // each call, so we always re-run init() to repopulate the IIFE's
-	    // local state before update() reads it. init() failures are
-	    // swallowed so update() still gets a chance to run.
-	    << "  if (typeof init === 'function') {\n"
-	    << "    try { init(); } catch (e) { /* init failure non-fatal */ }\n"
-	    << "  }\n"
-	    << "  if (typeof update === 'function') return update(globalThis.__currentValue);\n"
-	    << "  return globalThis.__currentValue;\n"
-	    << "})();\n";
 
     std::string evalScript = wrapper.str ();
 
@@ -885,6 +871,35 @@ void ScriptEngine::unregisterLiveScript (Data::Model::ScriptedDynamicValue* sv) 
     auto it = std::find (this->m_pendingFirstEval.begin (), this->m_pendingFirstEval.end (), sv);
     if (it != this->m_pendingFirstEval.end ()) {
 	this->m_pendingFirstEval.erase (it);
+    }
+}
+
+void ScriptEngine::tickAll (double time, double deltaTime, double fps) {
+    if (this->m_context == nullptr || !this->m_sceneReady) {
+	return;
+    }
+    // Refresh globalThis.__sceneCtx so engine.runtime / frametime /
+    // thisScene.time / dt see current frame values. The wrapper code
+    // reads from this object via getter properties.
+    JSContext* ctx = this->m_context;
+    JSValue globalObj = JS_GetGlobalObject (ctx);
+    JSValue ctxObj = JS_NewObject (ctx);
+    JS_SetPropertyStr (ctx, ctxObj, "time", JS_NewFloat64 (ctx, time));
+    JS_SetPropertyStr (ctx, ctxObj, "dt", JS_NewFloat64 (ctx, deltaTime));
+    JS_SetPropertyStr (ctx, ctxObj, "fps", JS_NewFloat64 (ctx, fps));
+    JS_SetPropertyStr (ctx, globalObj, "__sceneCtx", ctxObj);
+    JS_FreeValue (ctx, globalObj);
+
+    // Re-evaluate every time-aware live script. Snapshot the set so
+    // mutations during eval (rare — a script could spawn another
+    // ScriptedDynamicValue, which is unusual but possible) don't
+    // invalidate iteration.
+    std::vector<Data::Model::ScriptedDynamicValue*> snapshot (
+	this->m_liveScripts.begin (), this->m_liveScripts.end ());
+    for (auto* sv : snapshot) {
+	if (sv && sv->needsTick ()) {
+	    sv->reevaluate ();
+	}
     }
 }
 

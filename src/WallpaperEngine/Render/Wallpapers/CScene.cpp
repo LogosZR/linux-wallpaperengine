@@ -301,6 +301,18 @@ void CScene::addObjectToRenderOrder (const Object& object) {
 Camera& CScene::getCamera () const { return *this->m_camera; }
 
 void CScene::renderFrame (const glm::ivec4& viewport) {
+    // Per-frame tick for time-aware ScriptedDynamicValues. Runs before any
+    // object renders so visibility/alpha mutations from cycle/timer scripts
+    // land before the render loop reads them. Only re-evaluates scripts
+    // whose source references engine.runtime/frametime/etc.; pure
+    // property-driven scripts are skipped to keep cost down.
+    {
+	const float dt = g_Time - g_TimeLast;
+	const float fps = (dt > 0.0f) ? (1.0f / dt) : 60.0f;
+	Scripting::ScriptEngine::instance ().tickAll (
+	    static_cast<double> (g_Time), static_cast<double> (dt), static_cast<double> (fps));
+    }
+
     // ensure the virtual mouse position is up to date
     this->updateMouse (viewport);
 

@@ -27,6 +27,8 @@ bool detectNeedsTick (const std::string& src) {
 }
 } // namespace
 
+static int sNextScriptInstanceId = 1;
+
 ScriptedDynamicValue::ScriptedDynamicValue (
     std::string scriptSource,
     std::map<std::string, DynamicValueUniquePtr> scriptProps,
@@ -38,6 +40,7 @@ ScriptedDynamicValue::ScriptedDynamicValue (
     m_scriptProps (std::move (scriptProps)),
     m_watchProperties (std::move (watchProperties)),
     m_baseValue (std::move (baseValue)),
+    m_instanceId (sNextScriptInstanceId++),
     m_needsTick (detectNeedsTick (this->m_scriptSource)) {
     // Listen for changes on each script property. The listener guards
     // against running before sceneReady() — evaluations triggered during
@@ -97,7 +100,7 @@ void ScriptedDynamicValue::reevaluate () {
     }
 
     auto result = WallpaperEngine::Scripting::ScriptEngine::instance ().evaluate (
-	this->m_scriptSource, propsMap, this->m_baseValue);
+	this->m_scriptSource, propsMap, this->m_baseValue, this->m_instanceId);
 
     if (result) {
 	this->update (*result);

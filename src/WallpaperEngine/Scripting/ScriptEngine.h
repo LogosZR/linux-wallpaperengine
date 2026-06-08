@@ -43,12 +43,18 @@ public:
      * @param scriptSource The full JS script text (ES6 module with export function update(value))
      * @param scriptProperties Map of property name to current DynamicValue*
      * @param currentValue The current value to pass to update()
+     * @param instanceId Optional stable id used to namespace per-instance state.
+     *        When provided (>0), the script's top-level vars survive across
+     *        evals via a globalThis.__scriptInst_<id> closure — cycle/timer
+     *        state accumulates correctly. When 0, falls back to fresh-IIFE
+     *        per call (no state preservation).
      * @return The modified value from update(), or a copy of currentValue on error
      */
     DynamicValueUniquePtr evaluate (
 	const std::string& scriptSource,
 	const std::map<std::string, DynamicValue*>& scriptProperties,
-	const DynamicValue& currentValue
+	const DynamicValue& currentValue,
+	int instanceId = 0
     );
 
     // -------------------------------------------------------------------
@@ -167,6 +173,17 @@ public:
      * they don't run against a half-built scene.
      */
     bool isSceneReady () const { return this->m_sceneReady; }
+
+    /**
+     * Per-frame tick. Updates the JS-side __sceneCtx (time, dt, fps) so
+     * scripts can read engine.runtime/frametime, and re-evaluates every
+     * time-aware ScriptedDynamicValue (those whose source references
+     * engine.runtime / frametime / thisScene.time / dt). Property-driven
+     * scripts skip the per-frame eval to keep cost down.
+     *
+     * Called by CScene::renderFrame() once per frame.
+     */
+    void tickAll (double time, double deltaTime, double fps);
 
     /**
      * Resolve a layer name to its CObject id within the active scene.

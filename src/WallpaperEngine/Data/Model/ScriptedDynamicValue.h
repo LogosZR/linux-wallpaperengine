@@ -52,11 +52,19 @@ public:
      */
     bool needsTick () const { return this->m_needsTick; }
 
+    /**
+     * Stable per-instance id used by the JS engine to namespace this
+     * script's persistent closure (top-level vars survive across evals
+     * so cycle/timer state accumulates correctly).
+     */
+    int instanceId () const { return this->m_instanceId; }
+
 private:
     std::string m_scriptSource;
     std::map<std::string, DynamicValueUniquePtr> m_scriptProps;
     std::map<std::string, DynamicValue*> m_watchProperties;
     DynamicValue m_baseValue;
+    int m_instanceId = 0;
     bool m_needsTick = false;
     bool m_evaluating = false;  // re-entrancy guard
 };
