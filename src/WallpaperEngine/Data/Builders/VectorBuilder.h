@@ -37,9 +37,22 @@ public:
 	// wild use comma-separated vectors ("0.10,0.11,0.12") instead of
 	// space-separated, and rejecting them just means the wallpaper fails
 	// to load for a cosmetic format difference.
-	const char* first = strpbrk (p, " ,");
-	const char* second = first ? strpbrk (first + 1, " ,") : nullptr;
-	const char* third = second ? strpbrk (second + 1, " ,") : nullptr;
+	//
+	// Adjacent separator characters (e.g. ", " between values) collapse
+	// to a single logical separator. Without this, "0.0, 1.0" reads as
+	// 3 values (comma, space, end) and gets rejected as too many.
+	auto nextSep = [] (const char* from) -> const char* {
+	    const char* sep = strpbrk (from, " ,");
+	    if (sep == nullptr) return nullptr;
+	    // Skip consecutive separators so ", " / " ," / "  " act as one.
+	    while (*(sep + 1) == ' ' || *(sep + 1) == ',') {
+		++sep;
+	    }
+	    return sep;
+	};
+	const char* first = nextSep (p);
+	const char* second = first ? nextSep (first + 1) : nullptr;
+	const char* third = second ? nextSep (second + 1) : nullptr;
 
 	if (first == nullptr) {
 	    return 1;
@@ -77,10 +90,21 @@ public:
 	const char* p = str.c_str ();
 
 	// get up to 4 separators (space or comma — wallpapers in the wild
-	// use either; both forms are equivalent for vector parsing)
-	const char* first = strpbrk (p, " ,");
-	const char* second = first ? strpbrk (first + 1, " ,") : nullptr;
-	const char* third = second ? strpbrk (second + 1, " ,") : nullptr;
+	// use either; both forms are equivalent for vector parsing).
+	// Adjacent separator chars (", " / " ," / "  ") collapse to a single
+	// logical separator so "0.0, 1.0" parses as a 2-vector instead of
+	// being rejected as too many values.
+	auto nextSep = [] (const char* from) -> const char* {
+	    const char* sep = strpbrk (from, " ,");
+	    if (sep == nullptr) return nullptr;
+	    while (*(sep + 1) == ' ' || *(sep + 1) == ',') {
+		++sep;
+	    }
+	    return sep;
+	};
+	const char* first = nextSep (p);
+	const char* second = first ? nextSep (first + 1) : nullptr;
+	const char* third = second ? nextSep (second + 1) : nullptr;
 
 	// validate lengths against what was found in the strings
 	if constexpr (length == 1) {
