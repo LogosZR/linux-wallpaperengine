@@ -285,10 +285,19 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
 	    // ── thisScene shim with getLayer support ────────────────────────
 	    // For evaluate() (property scripts), we don't have time/dt context,
 	    // so thisScene is minimal — just getLayer for cross-layer mutation.
+	    // getLayer accepts both string names and numeric indices, matching
+	    // WPE editor conventions where init() iterates by index.
 	    << "  var thisScene = {\n"
-	    << "    getLayer: function(name) {\n"
+	    << "    getLayer: function(arg) {\n"
+	    << "      if (typeof arg === 'number') {\n"
+	    << "        var arr = globalThis.__sceneLayersByIndex;\n"
+	    << "        return (arr && arr[arg]) ? arr[arg] : null;\n"
+	    << "      }\n"
 	    << "      var l = globalThis.__sceneLayers;\n"
-	    << "      return (l && l[name]) ? l[name] : null;\n"
+	    << "      return (l && l[arg]) ? l[arg] : null;\n"
+	    << "    },\n"
+	    << "    getLayerCount: function() {\n"
+	    << "      return globalThis.__sceneLayerCount || 0;\n"
 	    << "    }\n"
 	    << "  };\n"
 	    // ── thisLayer stub for property scripts ────────────────────
@@ -356,6 +365,16 @@ DynamicValueUniquePtr ScriptEngine::evaluate (
     }
 
     wrapper << body << "\n"
+	    // Some property scripts split state initialization into init()
+	    // (e.g., iterating thisScene to build layer index arrays) and
+	    // per-frame work into update(). createLayerScript runs init once
+	    // and persists state across ticks; evaluate() runs as a fresh IIFE
+	    // each call, so we always re-run init() to repopulate the IIFE's
+	    // local state before update() reads it. init() failures are
+	    // swallowed so update() still gets a chance to run.
+	    << "  if (typeof init === 'function') {\n"
+	    << "    try { init(); } catch (e) { /* init failure non-fatal */ }\n"
+	    << "  }\n"
 	    << "  if (typeof update === 'function') return update(globalThis.__currentValue);\n"
 	    << "  return globalThis.__currentValue;\n"
 	    << "})();\n";
@@ -460,9 +479,16 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "    get currentTime() { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
 	    << "    get dt()          { var c = globalThis.__sceneCtx; return c ? c.dt   : 0; },\n"
 	    << "    get fps()         { var c = globalThis.__sceneCtx; return c ? c.fps  : 60; },\n"
-	    << "    getLayer: function(name) {\n"
+	    << "    getLayer: function(arg) {\n"
+	    << "      if (typeof arg === 'number') {\n"
+	    << "        var arr = globalThis.__sceneLayersByIndex;\n"
+	    << "        return (arr && arr[arg]) ? arr[arg] : null;\n"
+	    << "      }\n"
 	    << "      var l = globalThis.__sceneLayers;\n"
-	    << "      return (l && l[name]) ? l[name] : null;\n"
+	    << "      return (l && l[arg]) ? l[arg] : null;\n"
+	    << "    },\n"
+	    << "    getLayerCount: function() {\n"
+	    << "      return globalThis.__sceneLayerCount || 0;\n"
 	    << "    }\n"
 	    << "  };\n"
 	    // Minimal WE `engine` shim. Real Wallpaper Engine exposes a broad API
@@ -846,13 +872,17 @@ void ScriptEngine::buildSceneLayerRegistry () {
     JS_SetPropertyStr (ctx, globalObj, "__setLayerAlpha", setA);
 
     // Build the __sceneLayers map: { layerName: { __id, get visible, set visible, get alpha, set alpha } }.
+    // Also build __sceneLayersByIndex (array) and __sceneLayerCount so scripts
+    // can iterate by integer index as the WPE editor convention does.
     // We construct it via JS rather than the C API because property
     // descriptors with getters/setters are easier in JS syntax.
     std::ostringstream js;
     js << "globalThis.__sceneLayers = {};\n"
-       << "globalThis.__buildLayerProxy = function(id) {\n"
+       << "globalThis.__sceneLayersByIndex = [];\n"
+       << "globalThis.__buildLayerProxy = function(id, name) {\n"
        << "  return {\n"
        << "    __id: id,\n"
+       << "    name: name,\n"
        << "    get visible() { return globalThis.__getLayerVisible(id); },\n"
        << "    set visible(v) { globalThis.__setLayerVisible(id, v ? true : false); },\n"
        << "    get alpha()   { return globalThis.__getLayerAlpha(id); },\n"
@@ -860,6 +890,7 @@ void ScriptEngine::buildSceneLayerRegistry () {
        << "  };\n"
        << "};\n";
 
+    int layerIndex = 0;
     for (const auto* obj : this->m_currentScene->getObjectsByRenderOrder ()) {
 	if (obj == nullptr) {
 	    continue;
@@ -877,9 +908,12 @@ void ScriptEngine::buildSceneLayerRegistry () {
 	    }
 	    safe.push_back (c);
 	}
-	js << "globalThis.__sceneLayers['" << safe << "'] = globalThis.__buildLayerProxy ("
-	   << obj->getId () << ");\n";
+	js << "globalThis.__sceneLayersByIndex[" << layerIndex << "] = "
+	   << "globalThis.__sceneLayers['" << safe << "'] = "
+	   << "globalThis.__buildLayerProxy (" << obj->getId () << ", '" << safe << "');\n";
+	++layerIndex;
     }
+    js << "globalThis.__sceneLayerCount = " << layerIndex << ";\n";
 
     const std::string boot = js.str ();
     JSValue result = JS_Eval (ctx, boot.c_str (), boot.size (), "<scene-layer-registry>", JS_EVAL_TYPE_GLOBAL);
