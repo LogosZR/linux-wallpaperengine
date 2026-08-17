@@ -25,7 +25,18 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
     // protocol gives clients no say over window position), which breaks
     // --ipc-socket reposition and the initial --window XxYxWxH placement.
     // XWayland honors both.
+    //
+    // GLFW_PLATFORM / GLFW_PLATFORM_X11 are only defined starting GLFW 3.4 --
+    // Ubuntu 24.04's libglfw3-dev (used by CI) ships 3.3, so this must be
+    // version-guarded or the build fails there even though it links fine
+    // against this box's newer GLFW. Pre-3.4, GLFW auto-selects a platform
+    // at glfwInit() time with no way to force one -- there's no equivalent
+    // hint to fall back to, so older GLFW just gets the auto-selected
+    // platform (may be Wayland, reintroducing the position bug on that
+    // combination, but at least it compiles and runs).
+#if defined (GLFW_VERSION_MAJOR) && (GLFW_VERSION_MAJOR > 3 || (GLFW_VERSION_MAJOR == 3 && GLFW_VERSION_MINOR >= 4))
     glfwInitHint (GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
 
     // initialize glfw
     if (glfwInit () == GLFW_FALSE) {
