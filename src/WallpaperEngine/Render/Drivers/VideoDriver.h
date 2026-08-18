@@ -30,6 +30,9 @@ public:
      * @return The current output in use
      */
     [[nodiscard]] virtual Output::Output& getOutput () = 0;
+    /** Raw pointer variant — allows dynamic_cast from callers that need
+     *  the concrete output type. */
+    [[nodiscard]] virtual Output::Output* getOutputPtr () { return &getOutput (); }
     /**
      * @return The time that has passed since the driver started
      */
@@ -62,6 +65,14 @@ public:
      * @return The number of rendered frames since the start of the driver
      */
     [[nodiscard]] virtual uint32_t getFrameCounter () const = 0;
+    /**
+     * Current state of a key on the driver's keyboard, using the
+     * underlying toolkit's keycode (e.g. GLFW_KEY_*). Non-GLFW drivers
+     * may return false unconditionally. Used by the app's IPC layer to
+     * forward shortcut keys to a controlling host when the preview
+     * window has keyboard focus and the host window doesn't.
+     */
+    [[nodiscard]] virtual bool isKeyPressed (int key) const { return false; }
     /**
      * @param name
      * @return GetProcAddress for this video driver

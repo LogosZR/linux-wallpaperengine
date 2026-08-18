@@ -309,6 +309,8 @@ set(COMMON_SOURCES
 
     src/WallpaperEngine/Application/ApplicationContext.cpp
     src/WallpaperEngine/Application/ApplicationContext.h
+    src/WallpaperEngine/Application/IPCServer.cpp
+    src/WallpaperEngine/Application/IPCServer.h
     src/WallpaperEngine/Application/WallpaperApplication.cpp
     src/WallpaperEngine/Application/WallpaperApplication.h
 

@@ -74,6 +74,29 @@ public:
 	TextureFlags clamp = TextureFlags_ClampUVs;
     };
 
+    /**
+     * How to render the area outside the wallpaper under fit/non-filling scaling.
+     * Parsed from --background-mode. See documentation on the `backgroundMode`
+     * field for the accepted syntax.
+     */
+    struct BackgroundMode {
+	enum Kind { None, Color, ColorScheme, Blur };
+	Kind kind = None;
+	/** Only used when kind == Color. RGB in [0,1]. */
+	glm::vec3 color = { 0.0f, 0.0f, 0.0f };
+
+	/**
+	 * Parse the `--background-mode` syntax:
+	 *   "none"              — sampler clamp/repeat fills pillarbox
+	 *   "color=#RRGGBB"     — solid color fill
+	 *   "color=scheme"      — track the scene's own schemecolor (live)
+	 *   "blur"              — blurred copy of the live scene
+	 * Returns std::nullopt on invalid input. Shared between the CLI
+	 * parser and the IPC set_background_mode command.
+	 */
+	static std::optional<BackgroundMode> parse (const std::string& value);
+    };
+
     struct {
 	/**
 	 * General settings
@@ -103,6 +126,18 @@ public:
 	    std::optional<PlaylistDefinition> defaultPlaylist;
 	    /** Span groups: multiple monitors sharing one stretched wallpaper */
 	    std::vector<SpanGroup> spanGroups;
+	    /** Unix socket path for runtime IPC control. Empty = disabled. */
+	    std::string ipcSocketPath;
+	    /** When true, render pixels are written to a shared-memory file
+	     *  each frame (via glReadPixels) and the path is emitted over IPC
+	     *  as an !shm event. Enables external compositing by the host app
+	     *  without DMA-BUF/EGL dependencies. */
+	    bool shmOutput = false;
+	    /** Background rendered in letterbox/pillarbox areas under fit scaling.
+	     *  `none` keeps upstream behavior (sampler clamp/repeat fills those areas).
+	     *  `color=#rrggbb` paints a solid color. `blur` (future) paints a
+	     *  blurred copy of the scene. */
+	    BackgroundMode backgroundMode;
 	} general;
 
 	/**
@@ -196,6 +231,8 @@ public:
             .screenPlaylists = {},
             .defaultPlaylist = std::nullopt,
             .spanGroups = {},
+            .ipcSocketPath = "",
+            .backgroundMode = {},
         },
         .render = {
             .mode = NORMAL_WINDOW,

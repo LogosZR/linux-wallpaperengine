@@ -22,6 +22,40 @@
 using namespace WallpaperEngine::Application;
 using WallpaperEngine::Data::JSON::JSON;
 
+std::optional<ApplicationContext::BackgroundMode> ApplicationContext::BackgroundMode::parse (
+    const std::string& value
+) {
+    if (value == "none") {
+	return BackgroundMode { .kind = None };
+    }
+    if (value == "blur") {
+	return BackgroundMode { .kind = Blur };
+    }
+    if (value == "color=scheme") {
+	return BackgroundMode { .kind = ColorScheme };
+    }
+    if (value.rfind ("color=", 0) == 0) {
+	std::string hex = value.substr (6);
+	if (!hex.empty () && hex.front () == '#') hex.erase (0, 1);
+	if (hex.size () != 6) return std::nullopt;
+
+	auto parseByte = [&] (size_t offset, bool& ok) -> float {
+	    char* end = nullptr;
+	    const unsigned long byte = strtoul (std::string (hex.c_str () + offset, 2).c_str (), &end, 16);
+	    if (end == nullptr || *end != '\0') ok = false;
+	    return static_cast<float> (byte) / 255.0f;
+	};
+	bool ok = true;
+	const float r = parseByte (0, ok);
+	const float g = parseByte (2, ok);
+	const float b = parseByte (4, ok);
+	if (!ok) return std::nullopt;
+
+	return BackgroundMode { .kind = Color, .color = { r, g, b } };
+    }
+    return std::nullopt;
+}
+
 std::filesystem::path ApplicationContext::resolvePlaylistItemPath (const std::string& raw) const {
     if (raw.empty ()) {
 	return {};
@@ -290,6 +324,36 @@ void ApplicationContext::loadSettingsFromArgv () {
 	    this->settings.render.window.geometry.y = strtol (delim1 + 1, nullptr, 10);
 	    this->settings.render.window.geometry.z = strtol (delim2 + 1, nullptr, 10);
 	    this->settings.render.window.geometry.w = strtol (delim3 + 1, nullptr, 10);
+	})
+	.append ();
+    backgroundMode.add_argument ("--ipc-socket")
+	.help ("Listen for runtime control commands on this Unix socket path. "
+	       "Fire-and-forget protocol, newline-delimited commands. "
+	       "Supports: reposition, set_property.")
+	.default_value (std::string (""))
+	.action ([this] (const std::string& value) -> void {
+	    this->settings.general.ipcSocketPath = value;
+	});
+    backgroundMode.add_argument ("--shm-output")
+	.help ("Write rendered frames to a /dev/shm buffer each tick and emit "
+	       "the path+dimensions over IPC (!shm event). Enables external "
+	       "compositing by the host app.")
+	.flag ()
+	.action ([this] (const std::string&) -> void {
+	    this->settings.general.shmOutput = true;
+	});
+    backgroundMode.add_argument ("--background-mode")
+	.help ("How to paint the area outside the wallpaper under fit scaling. "
+	       "\"none\" (default) keeps the sampler clamp/repeat behavior. "
+	       "\"color=#RRGGBB\" paints a solid color. \"blur\" paints a blurred "
+	       "copy of the scene behind the fit rect.")
+	.default_value (std::string ("none"))
+	.action ([this] (const std::string& value) -> void {
+	    auto parsed = BackgroundMode::parse (value);
+	    if (!parsed.has_value ()) {
+		sLog.exception ("Invalid --background-mode: ", value);
+	    }
+	    this->settings.general.backgroundMode = *parsed;
 	})
 	.append ();
     backgroundMode.add_argument ("-r", "--screen-root")

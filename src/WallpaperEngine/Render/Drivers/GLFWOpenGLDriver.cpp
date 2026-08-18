@@ -21,6 +21,23 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
     VideoDriver (app, m_mouseInput), m_context (context), m_mouseInput (*this) {
     glfwSetErrorCallback (CustomGLFWErrorHandler);
 
+    // Force X11 backend. On Wayland, glfwSetWindowPos is unsupported (the
+    // protocol gives clients no say over window position), which breaks
+    // --ipc-socket reposition and the initial --window XxYxWxH placement.
+    // XWayland honors both.
+    //
+    // GLFW_PLATFORM / GLFW_PLATFORM_X11 are only defined starting GLFW 3.4 --
+    // Ubuntu 24.04's libglfw3-dev (used by CI) ships 3.3, so this must be
+    // version-guarded or the build fails there even though it links fine
+    // against this box's newer GLFW. Pre-3.4, GLFW auto-selects a platform
+    // at glfwInit() time with no way to force one -- there's no equivalent
+    // hint to fall back to, so older GLFW just gets the auto-selected
+    // platform (may be Wayland, reintroducing the position bug on that
+    // combination, but at least it compiles and runs).
+#if defined (GLFW_VERSION_MAJOR) && (GLFW_VERSION_MAJOR > 3 || (GLFW_VERSION_MAJOR == 3 && GLFW_VERSION_MINOR >= 4))
+    glfwInitHint (GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
+
     // initialize glfw
     if (glfwInit () == GLFW_FALSE) {
 	sLog.exception ("Failed to initialize glfw");
@@ -42,6 +59,7 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
 	glfwWindowHint (GLFW_DECORATED, GLFW_FALSE);
 	glfwWindowHint (GLFW_FLOATING, GLFW_TRUE);
     }
+
 
 #if !NDEBUG
     glfwWindowHint (GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE);
@@ -107,10 +125,27 @@ glm::ivec2 GLFWOpenGLDriver::getFramebufferSize () const {
 
 uint32_t GLFWOpenGLDriver::getFrameCounter () const { return this->m_frameCounter; }
 
+bool GLFWOpenGLDriver::isKeyPressed (int key) const {
+    return glfwGetKey (this->m_window, key) == GLFW_PRESS;
+}
+
 void GLFWOpenGLDriver::dispatchEventQueue () {
     static float startTime, endTime, minimumTime = 1.0f / this->m_context.settings.render.maximumFPS;
     // get the start time of the frame
     startTime = this->getRenderTime ();
+
+    // When background-mode fills the pillarbox with a color, set the clear
+    // color each frame so the scene blit leaves that color visible outside
+    // the fit-rect. `color=...` uses the parsed hex; `color=scheme` reads
+    // the live scene clear color so the pillarbox tracks schemecolor
+    // property tweaks automatically.
+    const auto& bg = this->m_context.settings.general.backgroundMode;
+    if (bg.kind == Application::ApplicationContext::BackgroundMode::Color) {
+	glClearColor (bg.color.r, bg.color.g, bg.color.b, 1.0f);
+    } else if (bg.kind == Application::ApplicationContext::BackgroundMode::ColorScheme) {
+	const glm::vec3 scheme = this->getApp ().getSceneClearColor ();
+	glClearColor (scheme.r, scheme.g, scheme.b, 1.0f);
+    }
     // clear the screen
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 

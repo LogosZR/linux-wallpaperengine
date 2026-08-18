@@ -1,5 +1,10 @@
 #include "WallpaperApplication.h"
 
+#include <cstdio>
+#include <sstream>
+#include <vector>
+
+#include "IPCServer.h"
 #include "Steam/FileSystem/FileSystem.h"
 #include "WallpaperEngine/Application/ApplicationState.h"
 #include "WallpaperEngine/Assets/AssetLoadException.h"
@@ -74,6 +79,7 @@ void WallpaperApplication::initializeSubsystems () {
     // initialize player dbus (update every 2 seconds)
     m_mediaSource = std::make_unique<WallpaperEngine::Media::DBusMediaSource> (std::chrono::milliseconds (2000));
 }
+WallpaperApplication::~WallpaperApplication () = default;
 
 AssetLocatorUniquePtr WallpaperApplication::setupAssetLocator (const std::string& bg) const {
     auto container = std::make_unique<Container> ();
@@ -224,8 +230,9 @@ void WallpaperApplication::loadBackgrounds () {
 }
 
 ProjectUniquePtr WallpaperApplication::loadBackground (const std::string& bg) {
-    auto container = this->setupAssetLocator (bg);
-    auto json = WallpaperEngine::Data::JSON::JSON::parse (container->readString ("project.json"));
+    try {
+	auto container = this->setupAssetLocator (bg);
+	auto json = WallpaperEngine::Data::JSON::JSON::parse (container->readString ("project.json"));
 
     // when a background is loaded, reset the screenshot variables
     // this allows taking screenshots after a background changes
@@ -241,6 +248,15 @@ ProjectUniquePtr WallpaperApplication::loadBackground (const std::string& bg) {
     }
 
     return WallpaperEngine::Data::Parsers::ProjectParser::parse (json, std::move (container));
+    } catch (const std::exception& e) {
+	// Re-throw with the wallpaper path prefixed so the top-level catch
+	// in main.cpp can tell us WHICH wallpaper killed the parser. Without
+	// this we just see 'type must be number, but is string' and have
+	// to guess the bg from process arg history.
+	throw std::runtime_error (
+	    std::string ("loadBackground failed for bg=") + bg + ": " + e.what ()
+	);
+    }
 }
 
 std::vector<std::size_t>
@@ -520,6 +536,330 @@ void WallpaperApplication::setupPropertiesForProject (const Project& project) {
 void WallpaperApplication::setupProperties () {
     for (const auto& [background, info] : this->m_backgrounds) {
 	this->setupPropertiesForProject (*info);
+    }
+}
+
+void WallpaperApplication::ipcReposition (glm::ivec4 geometry) {
+    if (this->m_context.settings.render.mode
+        != ApplicationContext::EXPLICIT_WINDOW) {
+	sLog.error ("ipcReposition ignored: not in EXPLICIT_WINDOW mode");
+	return;
+    }
+    this->m_context.settings.render.window.geometry = geometry;
+    this->m_videoDriver->resizeWindow (geometry);
+}
+
+void WallpaperApplication::ipcSetProperty (
+    const std::string& key, const std::string& value
+) {
+    bool found = false;
+    for (const auto& [name, info] : this->m_backgrounds) {
+	auto it = info->properties.find (key);
+	if (it != info->properties.end ()) {
+	    // Upstream's rewrite added an UpdateSource parameter so the scripting
+	    // engine can tell script-driven changes from user-driven ones. An IPC
+	    // set_property is the user reaching in at runtime (via wpe's Tweak
+	    // drawer), so User is the correct provenance -- not Script, which
+	    // would let a wallpaper's own script clobber a deliberate user choice.
+	    it->second->update (value, WallpaperEngine::Data::Model::DynamicValue::UpdateSource::User);
+	    found = true;
+	}
+    }
+    if (!found) {
+	sLog.error ("ipcSetProperty: unknown key: ", key);
+    }
+}
+
+bool WallpaperApplication::ipcSetBackgroundMode (const std::string& value) {
+    auto parsed = ApplicationContext::BackgroundMode::parse (value);
+    if (!parsed.has_value ()) {
+	sLog.error ("ipcSetBackgroundMode: invalid mode: ", value);
+	return false;
+    }
+    // The render loop reads settings.general.backgroundMode each frame so
+    // the next render picks up the new value automatically. The backdrop-
+    // blur pipeline was allocated at setup time for this exact reason.
+    this->m_context.settings.general.backgroundMode = *parsed;
+    return true;
+}
+
+bool WallpaperApplication::ipcLoadScene (const std::string& path, const std::string& screen, std::string& outError) {
+    // Resolve target screen — caller passes empty for "default" (single-window
+    // mode like Jumbo) or a screen name (apply mode).
+    const std::string target = screen.empty () ? std::string ("default") : screen;
+
+    // Make a viewport current before any GL work — same precondition the
+    // playlist path enforces. Without an active context, asset uploads in
+    // CWallpaper::fromWallpaper crash hard.
+    if (!this->makeAnyViewportCurrent ()) {
+	outError = "no active viewport";
+	return false;
+    }
+
+    ProjectUniquePtr project;
+    try {
+	project = this->loadBackground (path);
+    } catch (const std::exception& e) {
+	outError = std::string ("loadBackground: ") + e.what ();
+	return false;
+    }
+
+    if (!project) {
+	outError = "loadBackground returned null";
+	return false;
+    }
+
+    try {
+	this->setupPropertiesForProject (*project);
+	this->ensureBrowserForProject (*project);
+    } catch (const std::exception& e) {
+	outError = std::string ("setupProperties: ") + e.what ();
+	return false;
+    }
+
+    this->m_backgrounds[target] = std::move (project);
+
+    // Resolve scaling/clamp the same way advancePlaylist does — per-screen
+    // override falls back to the global render-window default.
+    const auto scalingIt = this->m_context.settings.general.screenScalings.find (target);
+    const auto clampIt = this->m_context.settings.general.screenClamps.find (target);
+    const auto scaling = scalingIt != this->m_context.settings.general.screenScalings.end ()
+	? scalingIt->second
+	: this->m_context.settings.render.window.scalingMode;
+    const auto clamp = clampIt != this->m_context.settings.general.screenClamps.end ()
+	? clampIt->second
+	: this->m_context.settings.render.window.clamp;
+
+    if (!this->m_renderContext) {
+	outError = "render context not initialized";
+	return false;
+    }
+
+    try {
+	this->m_renderContext->setWallpaper (
+	    target,
+	    Render::CWallpaper::fromWallpaper (
+		*this->m_backgrounds[target]->wallpaper, *this->m_renderContext, *this->m_audioContext,
+		this->m_browserContext.get (), scaling, clamp
+	    )
+	);
+    } catch (const std::exception& e) {
+	outError = std::string ("setWallpaper: ") + e.what ();
+	return false;
+    }
+
+    // Track the new path so subsequent --background-mode/--set-property/etc.
+    // serializations reflect reality (matches advancePlaylist behavior).
+    this->m_context.settings.general.screenBackgrounds[target] = path;
+    sLog.out ("ipcLoadScene: swapped ", target, " → ", path);
+    return true;
+}
+
+bool WallpaperApplication::ipcSamplePixel (int x, int y, std::string& outHex) {
+    if (!this->m_videoDriver) return false;
+    const glm::ivec2 fbSize = this->m_videoDriver->getFramebufferSize ();
+    if (x < 0 || y < 0 || x >= fbSize.x || y >= fbSize.y) return false;
+
+    // glReadPixels uses OpenGL coords (Y=0 at bottom); flip from window coords
+    // (Y=0 at top) that the IPC client natively thinks in.
+    const int glY = fbSize.y - 1 - y;
+    unsigned char rgb[3] = {0, 0, 0};
+    glBindFramebuffer (GL_FRAMEBUFFER, 0);
+    glReadPixels (x, glY, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+    const GLenum err = glGetError ();
+    if (err != GL_NO_ERROR) {
+	sLog.error ("ipcSamplePixel: glReadPixels error: ", err);
+	return false;
+    }
+
+    char buf[8];
+    std::snprintf (buf, sizeof (buf), "#%02x%02x%02x", rgb[0], rgb[1], rgb[2]);
+    outHex = buf;
+    return true;
+}
+
+bool WallpaperApplication::ipcSampleRegion (int x, int y, int w, int h, std::string& outHex) {
+    if (!this->m_videoDriver) return false;
+    // Cap block size to bound payload; 64*64*8 chars is about 32KB, fine over
+    // a unix socket but we never actually need more than ~16x16 for a loupe.
+    if (w < 1 || h < 1 || w > 64 || h > 64) return false;
+
+    const glm::ivec2 fbSize = this->m_videoDriver->getFramebufferSize ();
+
+    // Clamp the requested rect to the framebuffer. We read whatever falls
+    // inside, then pad out-of-bounds cells with #000000 so the caller
+    // always gets exactly w*h values.
+    const int clampedX = std::max (0, x);
+    const int clampedY = std::max (0, y);
+    const int clampedRight = std::min (fbSize.x, x + w);
+    const int clampedBottom = std::min (fbSize.y, y + h);
+    const int clampedW = std::max (0, clampedRight - clampedX);
+    const int clampedH = std::max (0, clampedBottom - clampedY);
+
+    std::vector<unsigned char> pixels (static_cast<size_t> (clampedW) * clampedH * 3, 0);
+    if (clampedW > 0 && clampedH > 0) {
+	// glReadPixels origin is bottom-left; convert the rect's top window
+	// coord to GL coord for its bottom row.
+	const int glY = fbSize.y - clampedBottom;
+	glBindFramebuffer (GL_FRAMEBUFFER, 0);
+	glPixelStorei (GL_PACK_ALIGNMENT, 1);
+	glReadPixels (clampedX, glY, clampedW, clampedH, GL_RGB, GL_UNSIGNED_BYTE, pixels.data ());
+	const GLenum err = glGetError ();
+	if (err != GL_NO_ERROR) {
+	    sLog.error ("ipcSampleRegion: glReadPixels error: ", err);
+	    return false;
+	}
+    }
+
+    // glReadPixels returns rows bottom-to-top; we want top-to-bottom so the
+    // hex string matches the window's visible orientation.
+    outHex.clear ();
+    outHex.reserve (static_cast<size_t> (w) * h * 8);
+    for (int row = 0; row < h; ++row) {
+	for (int col = 0; col < w; ++col) {
+	    const int wx = x + col;
+	    const int wy = y + row;
+	    char buf[9];
+	    if (wx < clampedX || wx >= clampedRight || wy < clampedY || wy >= clampedBottom) {
+		std::snprintf (buf, sizeof (buf), "#000000");
+	    } else {
+		// pixels[] is indexed by (glRow, col) where glRow 0 is the
+		// bottom of the clamped block.
+		const int localCol = wx - clampedX;
+		const int localRow = wy - clampedY;
+		const int glRow = clampedH - 1 - localRow;
+		const size_t off = static_cast<size_t> (glRow) * clampedW * 3 + static_cast<size_t> (localCol) * 3;
+		std::snprintf (buf, sizeof (buf), "#%02x%02x%02x", pixels[off], pixels[off + 1], pixels[off + 2]);
+	    }
+	    if (!outHex.empty ()) outHex += ' ';
+	    outHex += buf;
+	}
+    }
+    return true;
+}
+
+glm::vec3 WallpaperApplication::getSceneClearColor () const {
+    // Walk the first loaded wallpaper. Prefer the `schemecolor` user
+    // property (what WE scenes expose to the user as the tweakable brand
+    // color) over the scene's internal `clearcolor` binding — they're
+    // usually different properties on the same scene.
+    for (const auto& [name, info] : this->m_backgrounds) {
+	if (!info) continue;
+	auto it = info->properties.find ("schemecolor");
+	if (it != info->properties.end () && it->second) {
+	    return it->second->getVec3 ();
+	}
+    }
+    // Fallback: the scene-internal clear color (whichever prop drives it).
+    for (const auto& [name, info] : this->m_backgrounds) {
+	if (info && info->wallpaper && info->wallpaper->is<Data::Model::Scene> ()) {
+	    const auto* scene = info->wallpaper->as<Data::Model::Scene> ();
+	    if (scene->colors.clear && scene->colors.clear->value) {
+		return scene->colors.clear->value->getVec3 ();
+	    }
+	}
+    }
+    return glm::vec3 (0.0f, 0.0f, 0.0f);
+}
+
+void WallpaperApplication::ipcSetEyedropperActive (bool active) {
+    this->m_eyedropperActive = active;
+    this->m_lastEyedropperPos = { -1, -1 };
+    this->m_lastEyedropperClick = 0;
+    this->m_lastEyedropperEmitTime = 0.0f;
+}
+
+void WallpaperApplication::pollEyedropper () {
+    if (!this->m_eyedropperActive || !this->m_ipcServer || !this->m_videoDriver) return;
+
+    // Pull current mouse position + click state from the input context.
+    // Position is in framebuffer-space with Y=0 at the bottom (see
+    // GLFWMouseInput::update).
+    const auto& mouse = this->m_videoDriver->getInputContext ().getMouseInput ();
+    const glm::dvec2 rawPos = mouse.position ();
+    const glm::ivec2 fbSize = this->m_videoDriver->getFramebufferSize ();
+    const int fx = static_cast<int> (rawPos.x);
+    const int fy = fbSize.y - 1 - static_cast<int> (rawPos.y); // convert back to window coords
+    const glm::ivec2 winPos { fx, fy };
+
+    const bool inBounds =
+	fx >= 0 && fy >= 0 && fx < fbSize.x && fy < fbSize.y;
+
+    // Cursor event — fires on position change OR a low-rate tick so the
+    // loupe keeps refreshing over an animated scene when the cursor is
+    // stationary. 100ms feels responsive enough to read as "live" and is
+    // well below our per-key IPC debounce.
+    const float now = this->m_videoDriver->getRenderTime ();
+    const bool moved = winPos != this->m_lastEyedropperPos;
+    const bool idleTick = (now - this->m_lastEyedropperEmitTime) >= 0.1f;
+    if (inBounds && (moved || idleTick)) {
+	std::string hex;
+	if (this->ipcSamplePixel (fx, fy, hex)) {
+	    std::ostringstream data;
+	    data << fx << ' ' << fy << ' ' << hex;
+	    this->m_ipcServer->emitEvent ("cursor", data.str ());
+	    this->m_lastEyedropperEmitTime = now;
+	}
+	this->m_lastEyedropperPos = winPos;
+    }
+
+    // Click event — rising edge on left-click.
+    const int click = mouse.leftClick () == WallpaperEngine::Input::MouseClickStatus::Clicked ? 1 : 0;
+    if (click && !this->m_lastEyedropperClick && inBounds) {
+	std::string hex;
+	if (this->ipcSamplePixel (fx, fy, hex)) {
+	    std::ostringstream data;
+	    data << fx << ' ' << fy << ' ' << hex;
+	    this->m_ipcServer->emitEvent ("click", data.str ());
+	}
+    }
+    this->m_lastEyedropperClick = click;
+}
+
+void WallpaperApplication::pollClickForFocus () {
+    // Skip while eyedropper is active — its own !click event carries the
+    // signal and we don't want Kuro refocusing mid-pick. Also skip if
+    // the mouse input or IPC server isn't wired up.
+    if (this->m_eyedropperActive || !this->m_ipcServer || !this->m_videoDriver) return;
+
+    const auto& mouse = this->m_videoDriver->getInputContext ().getMouseInput ();
+    const int click = mouse.leftClick () == WallpaperEngine::Input::MouseClickStatus::Clicked ? 1 : 0;
+    if (click && !this->m_lastFocusClick) {
+	this->m_ipcServer->emitEvent ("focus_click", "");
+    }
+    this->m_lastFocusClick = click;
+}
+
+void WallpaperApplication::pollKeyboardForwarding () {
+    if (!this->m_ipcServer || !this->m_videoDriver) return;
+
+    // GLFW key → DOM KeyboardEvent.key name. We forward a curated set of
+    // hotkeys rather than every key so the IPC traffic stays bounded and
+    // we don't intercept text input on the host side. Letters map to the
+    // lowercase form; the host's handler normalizes case.
+    static const std::pair<int, const char*> kForwarded[] = {
+	{ 256, "Escape" },     // GLFW_KEY_ESCAPE
+	{ 257, "Enter" },      // GLFW_KEY_ENTER
+	{ 262, "ArrowRight" }, // GLFW_KEY_RIGHT
+	{ 263, "ArrowLeft" },  // GLFW_KEY_LEFT
+	{ 264, "ArrowDown" },  // GLFW_KEY_DOWN
+	{ 265, "ArrowUp" },    // GLFW_KEY_UP
+	{ 65,  "a" },          // GLFW_KEY_A
+	{ 66,  "b" },
+	{ 68,  "d" },
+	{ 70,  "f" },
+	{ 80,  "p" },          // GLFW_KEY_P
+	{ 83,  "s" },          // GLFW_KEY_S
+	{ 84,  "t" },          // GLFW_KEY_T
+    };
+
+    for (const auto& [keycode, name] : kForwarded) {
+	const int now = this->m_videoDriver->isKeyPressed (keycode) ? 1 : 0;
+	const int last = this->m_lastKeyState[keycode];
+	if (now && !last) {
+	    this->m_ipcServer->emitEvent ("key", name);
+	}
+	this->m_lastKeyState[keycode] = now;
     }
 }
 
@@ -828,6 +1168,12 @@ void WallpaperApplication::setup () {
     this->prepareOutputs ();
     this->setupOpenGLDebugging ();
 
+    if (!this->m_context.settings.general.ipcSocketPath.empty ()) {
+	this->m_ipcServer = std::make_unique<IPCServer> (
+	    this->m_context.settings.general.ipcSocketPath, *this
+	);
+    }
+
     if (this->m_context.settings.general.dumpStructure) {
 	auto prettyPrinter = Data::Dumpers::StringPrinter ();
 
@@ -962,9 +1308,29 @@ void WallpaperApplication::cleanup () {
 }
 
 void WallpaperApplication::show () {
-    setup ();
+	setup();
+
+    // Emit the shm path over IPC once so the host knows where to mmap.
+    // We wait until setup() completes because the output (which creates
+    // the shm buffer) is initialized inside setup().
+    if (this->m_ipcServer && this->m_context.settings.general.shmOutput) {
+	auto* glOut = dynamic_cast<Render::Drivers::Output::GLFWWindowOutput*> (this->m_videoDriver->getOutputPtr ());
+	if (glOut && glOut->shmActive ()) {
+	    this->m_ipcServer->emitEvent (
+		"shm",
+		glOut->shmPath () + " " +
+		std::to_string (glOut->getFullWidth ()) + " " +
+		std::to_string (glOut->getFullHeight ())
+	    );
+	}
+    }
+
     while (this->m_context.state.general.keepRunning) {
-	render ();
+		if (this->m_ipcServer) this->m_ipcServer->poll ();
+		this->pollEyedropper ();
+		this->pollClickForFocus ();
+		this->pollKeyboardForwarding ();
+		render();
     }
     cleanup ();
 }

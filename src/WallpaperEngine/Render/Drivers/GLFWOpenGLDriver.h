@@ -30,6 +30,7 @@ public:
     void hideWindow () override;
     [[nodiscard]] glm::ivec2 getFramebufferSize () const override;
     [[nodiscard]] uint32_t getFrameCounter () const override;
+    [[nodiscard]] bool isKeyPressed (int key) const override;
     void dispatchEventQueue () override;
     [[nodiscard]] void* getProcAddress (const char* name) const override;
 
