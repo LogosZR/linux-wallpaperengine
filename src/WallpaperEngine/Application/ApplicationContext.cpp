@@ -334,6 +334,18 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.action ([this] (const std::string& value) -> void {
 	    this->settings.general.ipcSocketPath = value;
 	});
+    backgroundMode.add_argument ("--hide-window")
+    	.help ("Create the render window but never show it. Rendering and "
+    	       "--shm-output are unaffected -- the GL context and backbuffer "
+    	       "exist whether or not the window is mapped -- but the window "
+    	       "takes no taskbar slot and cannot be raised over a host UI. "
+    	       "Prefer this to unmapping the window externally, which is not "
+    	       "durable: the window is re-mapped whenever it is repositioned.")
+    	.flag ()
+    	.action ([this] (const std::string&) -> void {
+    	    this->settings.general.hideWindow = true;
+    	});
+
     backgroundMode.add_argument ("--shm-output")
 	.help ("Write rendered frames to a /dev/shm buffer each tick and emit "
 	       "the path+dimensions over IPC (!shm event). Enables external "

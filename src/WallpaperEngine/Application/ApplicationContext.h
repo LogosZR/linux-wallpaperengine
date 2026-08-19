@@ -133,6 +133,16 @@ public:
 	     *  as an !shm event. Enables external compositing by the host app
 	     *  without DMA-BUF/EGL dependencies. */
 	    bool shmOutput = false;
+	    /** When set, the window is created but never shown (GLFW already
+	     *  creates it with GLFW_VISIBLE=FALSE; we simply skip showWindow()).
+	     *  Rendering and glReadnPixels are unaffected because the GL context
+	     *  and backbuffer exist regardless of whether the window is mapped.
+	     *  Intended for --shm-output consumers that composite frames
+	     *  themselves: an unmapped window has no taskbar entry, cannot be
+	     *  raised over the host UI, and -- unlike unmapping it externally --
+	     *  cannot be re-mapped behind your back when the window is
+	     *  repositioned. */
+	    bool hideWindow = false;
 	    /** Background rendered in letterbox/pillarbox areas under fit scaling.
 	     *  `none` keeps upstream behavior (sampler clamp/repeat fills those areas).
 	     *  `color=#rrggbb` paints a solid color. `blur` (future) paints a
