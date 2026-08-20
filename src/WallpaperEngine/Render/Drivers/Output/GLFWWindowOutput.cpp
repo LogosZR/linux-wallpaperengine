@@ -17,8 +17,17 @@ GLFWWindowOutput::GLFWWindowOutput (ApplicationContext& context, VideoDriver& dr
 	sLog.exception ("Initializing window output when not in output mode, how did you get here?!");
     }
 
-    // window should be visible
-    driver.showWindow ();
+    // Window should be visible -- unless the host composites our frames itself
+    // via --shm-output. Showing it then is actively harmful: it takes a taskbar
+    // slot and, in EXPLICIT_WINDOW mode, requests always-on-top, so it paints
+    // over the very UI that is displaying our frames. GLFW already created it
+    // with GLFW_VISIBLE=FALSE, so skipping showWindow() leaves it unmapped for
+    // good -- unlike hiding it afterwards, which does not survive a reposition.
+    // Rendering is unaffected: the GL context and backbuffer exist regardless of
+    // map state.
+    if (!this->m_context.settings.general.hideWindow) {
+	driver.showWindow ();
+    }
 
     if (this->m_context.settings.render.mode == Application::ApplicationContext::EXPLICIT_WINDOW) {
 	this->m_fullWidth = this->m_context.settings.render.window.geometry.z;

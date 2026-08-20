@@ -57,7 +57,12 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
     if (context.settings.render.mode == Application::ApplicationContext::EXPLICIT_WINDOW) {
 	glfwWindowHint (GLFW_RESIZABLE, GLFW_FALSE);
 	glfwWindowHint (GLFW_DECORATED, GLFW_FALSE);
-	glfwWindowHint (GLFW_FLOATING, GLFW_TRUE);
+	// GLFW_FLOATING is what sets _NET_WM_STATE_ABOVE -- i.e. it is the reason
+	// this window paints over everything, host UI included. Pointless for a
+	// window we never intend to show, and harmful if it ever does get mapped.
+	if (!context.settings.general.hideWindow) {
+	    glfwWindowHint (GLFW_FLOATING, GLFW_TRUE);
+	}
     }
 
 
