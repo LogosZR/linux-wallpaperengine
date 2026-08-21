@@ -2,6 +2,7 @@
 #include <glm/common.hpp>
 
 #include "WallpaperEngine/Render/Drivers/GLFWOpenGLDriver.h"
+#include "WallpaperEngine/Logging/Log.h"
 
 using namespace WallpaperEngine::Input::Drivers;
 
@@ -35,6 +36,15 @@ void GLFWMouseInput::update () {
         this->m_rightClick = this->m_driver.getApp ().injectedPointerRight () ? MouseClickStatus::Clicked
                                                                              : MouseClickStatus::Released;
         this->m_reportedPosition = this->m_mousePosition;
+        if (getenv ("KURO_POINTER_DEBUG") != nullptr) {
+            static int logged = 0;
+            if (logged < 5) {
+                logged++;
+                sLog.out ("KURO_POINTER: injected n=(", n.x, ",", n.y, ") -> px=(",
+                          this->m_mousePosition.x, ",", this->m_mousePosition.y,
+                          ") fb=", fb.x, "x", fb.y);
+            }
+        }
         return;
     }
 
