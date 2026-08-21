@@ -150,6 +150,17 @@ void IPCServer::handleLine (const std::string& line) {
 		} else {
 			m_app.ipcSetBackgroundMode (value);
 		}
+	} else if (cmd == "set_pointer") {
+		// set_pointer <nx> <ny> [left] [right]  -- normalised 0..1, TOP-LEFT origin.
+		double nx, ny;
+		if (iss >> nx >> ny) {
+			int left = 0, right = 0;
+			iss >> left; // optional
+			iss >> right; // optional
+			m_app.ipcSetPointer (nx, ny, left, right);
+		} else {
+			sLog.error ("IPCServer: expected set_pointer <nx> <ny> [left] [right]: ", line);
+		}
 	} else if (cmd == "start_eyedropper") {
 		m_app.ipcSetEyedropperActive (true);
 	} else if (cmd == "stop_eyedropper") {

@@ -142,6 +142,29 @@ public:
     void ipcSetEyedropperActive (bool active);
 
     /**
+     * Injects a virtual pointer position, for when this process has no mapped window.
+     *
+     * With --hide-window the GLFW window is never mapped, so glfwGetCursorPos cannot
+     * track anything and every g_PointerPosition effect (xray, cursor parallax) is
+     * silently dead. The host app knows where the pointer is over its own preview
+     * surface and sends it here.
+     *
+     * Coordinates are NORMALISED 0..1 with a TOP-LEFT origin -- deliberately not
+     * pixels. The render resolution is chosen by the host and capped, so a pixel
+     * contract would break every time that cap or the stage size changed. The
+     * conversion to the engine's bottom-left pixel space happens in the mouse driver,
+     * which is the only place that knows the framebuffer size.
+     */
+    void ipcSetPointer (double nx, double ny, int left, int right);
+
+    /** Whether a virtual pointer has been injected at least once. */
+    [[nodiscard]] bool hasInjectedPointer () const { return this->m_injectedPointerValid; }
+    /** Normalised 0..1, top-left origin. Only meaningful if hasInjectedPointer(). */
+    [[nodiscard]] glm::dvec2 injectedPointer () const { return this->m_injectedPointer; }
+    [[nodiscard]] int injectedPointerLeft () const { return this->m_injectedPointerLeft; }
+    [[nodiscard]] int injectedPointerRight () const { return this->m_injectedPointerRight; }
+
+    /**
      * Read the active scene's live clear color (a.k.a. scheme color). Used
      * by --background-mode=color=scheme to paint the pillarbox with
      * whatever the scene is currently rendering as its clear. Returns
@@ -277,6 +300,11 @@ private:
     // and streams !cursor / !click events. State cached here so we don't
     // spam identical cursor events on still frames.
     bool m_eyedropperActive = false;
+    /** Virtual pointer injected over IPC; see ipcSetPointer. */
+    bool m_injectedPointerValid = false;
+    glm::dvec2 m_injectedPointer = {};
+    int m_injectedPointerLeft = 0;
+    int m_injectedPointerRight = 0;
     glm::ivec2 m_lastEyedropperPos = { -1, -1 };
     int m_lastEyedropperClick = 0;
     // Re-emit the cursor sample on a low-rate tick so the loupe refreshes

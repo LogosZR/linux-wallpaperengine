@@ -762,6 +762,18 @@ glm::vec3 WallpaperApplication::getSceneClearColor () const {
     return glm::vec3 (0.0f, 0.0f, 0.0f);
 }
 
+void WallpaperApplication::ipcSetPointer (const double nx, const double ny, const int left, const int right) {
+    // Clamp rather than reject: a pointer a few pixels outside the surface during a
+    // drag is normal, and dropping those updates makes effects stick at the edge.
+    this->m_injectedPointer = {
+        nx < 0.0 ? 0.0 : (nx > 1.0 ? 1.0 : nx),
+        ny < 0.0 ? 0.0 : (ny > 1.0 ? 1.0 : ny),
+    };
+    this->m_injectedPointerLeft = left ? 1 : 0;
+    this->m_injectedPointerRight = right ? 1 : 0;
+    this->m_injectedPointerValid = true;
+}
+
 void WallpaperApplication::ipcSetEyedropperActive (bool active) {
     this->m_eyedropperActive = active;
     this->m_lastEyedropperPos = { -1, -1 };

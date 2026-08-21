@@ -13,6 +13,31 @@ void GLFWMouseInput::update () {
 	return;
     }
 
+    // An injected pointer wins over GLFW. With --hide-window the window is never
+    // mapped, so glfwGetCursorPos returns a position that has no relationship to where
+    // the user's cursor actually is over the host's preview surface -- every
+    // g_PointerPosition effect (xray, cursor parallax) is silently dead. When the host
+    // tells us where the pointer is, that is authoritative.
+    if (this->m_driver.getApp ().hasInjectedPointer ()) {
+        const glm::dvec2 n = this->m_driver.getApp ().injectedPointer ();
+        const glm::ivec2 fb = this->m_driver.getFramebufferSize ();
+
+        // Normalised top-left origin -> engine pixels with bottom-left origin. This is
+        // the same flip applied to the GLFW path below; doing it here keeps the wire
+        // format resolution-independent, which matters because the host caps the render
+        // size and can change it.
+        this->m_mousePosition = {
+            n.x * static_cast<double> (fb.x),
+            (1.0 - n.y) * static_cast<double> (fb.y),
+        };
+        this->m_leftClick = this->m_driver.getApp ().injectedPointerLeft () ? MouseClickStatus::Clicked
+                                                                           : MouseClickStatus::Released;
+        this->m_rightClick = this->m_driver.getApp ().injectedPointerRight () ? MouseClickStatus::Clicked
+                                                                             : MouseClickStatus::Released;
+        this->m_reportedPosition = this->m_mousePosition;
+        return;
+    }
+
     const int leftClickState = glfwGetMouseButton (this->m_driver.getWindow (), GLFW_MOUSE_BUTTON_LEFT);
     const int rightClickState = glfwGetMouseButton (this->m_driver.getWindow (), GLFW_MOUSE_BUTTON_RIGHT);
 

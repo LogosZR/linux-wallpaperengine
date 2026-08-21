@@ -18,7 +18,7 @@ class WallpaperApplication;
  *   #<id> <cmd> [args]    — request with id; server responds with #<id> ok|err ...
  *   !<type> [data]        — server-initiated event (pushed without a request)
  *
- * Fire-and-forget commands: reposition, set_property, set_background_mode,
+ * Fire-and-forget commands: reposition, set_property, set_background_mode, set_pointer,
  * start_eyedropper, stop_eyedropper.
  *
  * Request/response commands: sample_pixel, sample_region, load_scene.
