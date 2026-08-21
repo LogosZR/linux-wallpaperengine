@@ -386,6 +386,19 @@ void CScene::updateMouse (const glm::ivec4& viewport) {
     // Invert previous normalization of Y to match what the shader expects
     double mouseY = 1.0 - normalizedMouseY;
 
+    if (getenv ("KURO_POINTER_DEBUG") != nullptr) {
+        // Periodic, not first-N: a first-N cap is exhausted by startup frames BEFORE any
+        // injection arrives, so it shows only the pre-injection state -- which is exactly
+        // the misleading result it gave the first time.
+        static int n = 0;
+        n++;
+        if (n < 3 || n % 60 == 0) {
+            sLog.out ("KURO_SCENE: pos=(", position.x, ",", position.y, ") viewport=(", viewport.x, ",",
+                      viewport.y, ",", viewport.z, ",", viewport.w, ") -> mouseX=", mouseX,
+                      " normY=", normalizedMouseY, " uv=(", uvs.ustart, ",", uvs.uend, ",", uvs.vstart, ",",
+                      uvs.vend, ")");
+        }
+    }
     this->m_mousePosition.x = this->m_mousePositionNormalized.x;
     this->m_mousePosition.y = uvs.vstart + mouseY * (uvs.vend - uvs.vstart);
 }
