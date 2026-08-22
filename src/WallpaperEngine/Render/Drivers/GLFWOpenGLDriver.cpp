@@ -80,6 +80,11 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
     // make context current, required for glew initialization
     glfwMakeContextCurrent (this->m_window);
 
+    // We own frame pacing below. The GLX driver's implicit/default swap
+    // interval can otherwise clamp a hidden shm-output renderer to ~60 Hz,
+    // even when --fps requests a higher rate and no window is presented.
+    glfwSwapInterval (0);
+
     // initialize glew for rendering
     if (const GLenum result = glewInit (); result != GLEW_OK) {
 	sLog.error ("Failed to initialize GLEW: ", glewGetErrorString (result));
