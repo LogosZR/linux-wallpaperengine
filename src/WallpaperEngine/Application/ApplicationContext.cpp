@@ -334,6 +334,13 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.action ([this] (const std::string& value) -> void {
 	    this->settings.general.ipcSocketPath = value;
 	});
+    backgroundGroup.add_argument ("--ipc-owner-cleans")
+	.help ("Do not unlink the IPC socket pathname before bind or on shutdown. "
+	       "The spawning owner is responsible for exact cleanup. Disabled by default.")
+	.flag ()
+	.action ([this] (const std::string&) -> void {
+	    this->settings.general.ipcOwnerCleans = true;
+	});
     backgroundMode.add_argument ("--hide-window")
     	.help ("Create the render window but never show it. Rendering and "
     	       "--shm-output are unaffected -- the GL context and backbuffer "

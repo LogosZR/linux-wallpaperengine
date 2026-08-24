@@ -7,27 +7,40 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <cstddef>
 #include <cstring>
 #include <sstream>
 
 using namespace WallpaperEngine::Application;
 
-IPCServer::IPCServer (const std::string& path, WallpaperApplication& app) :
-	m_path (path), m_app (app) {
-	// Remove any stale socket file (prior crashed instance).
-	unlink (path.c_str ());
+namespace {
+constexpr size_t MAX_CLIENT_INPUT = 1024 * 1024;
+constexpr size_t MAX_QUEUED_OUTPUT = 1024 * 1024;
+}
 
-	m_listenFd = socket (AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+IPCServer::IPCServer (const std::string& path, bool ownerCleans, WallpaperApplication& app) :
+	m_path (path), m_ownerCleans (ownerCleans), m_app (app) {
+	sockaddr_un addr {};
+	if (path.size () >= sizeof (addr.sun_path)) {
+		sLog.error ("IPCServer: socket path is too long (", path.size (), " bytes; maximum is ", sizeof (addr.sun_path) - 1, "): ", path);
+		return;
+	}
+
+	// Preserve the historical Tauri behavior unless the future core explicitly
+	// opts into owner-managed exact cleanup.
+	if (!m_ownerCleans) unlink (path.c_str ());
+
+	m_listenFd = socket (AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 	if (m_listenFd < 0) {
 		sLog.error ("IPCServer: socket() failed: ", strerror (errno));
 		return;
 	}
 
-	sockaddr_un addr {};
 	addr.sun_family = AF_UNIX;
-	std::strncpy (addr.sun_path, path.c_str (), sizeof (addr.sun_path) - 1);
+	std::memcpy (addr.sun_path, path.c_str (), path.size () + 1);
+	const auto addrLength = static_cast<socklen_t> (offsetof (sockaddr_un, sun_path) + path.size () + 1);
 
-	if (bind (m_listenFd, reinterpret_cast<sockaddr*> (&addr), sizeof (addr)) < 0) {
+	if (bind (m_listenFd, reinterpret_cast<sockaddr*> (&addr), addrLength) < 0) {
 		sLog.error ("IPCServer: bind(", path, ") failed: ", strerror (errno));
 		close (m_listenFd);
 		m_listenFd = -1;
@@ -47,7 +60,7 @@ IPCServer::IPCServer (const std::string& path, WallpaperApplication& app) :
 IPCServer::~IPCServer () {
 	closeClient ();
 	if (m_listenFd >= 0) close (m_listenFd);
-	unlink (m_path.c_str ());
+	if (!m_ownerCleans) unlink (m_path.c_str ());
 }
 
 void IPCServer::poll () {
@@ -57,11 +70,12 @@ void IPCServer::poll () {
 		acceptClient ();
 	} else {
 		readClient ();
+		flushOutput ();
 	}
 }
 
 void IPCServer::acceptClient () {
-	int fd = accept4 (m_listenFd, nullptr, nullptr, SOCK_NONBLOCK);
+	int fd = accept4 (m_listenFd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
 	if (fd < 0) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK) {
 			sLog.error ("IPCServer: accept() failed: ", strerror (errno));
@@ -70,6 +84,7 @@ void IPCServer::acceptClient () {
 	}
 	m_clientFd = fd;
 	m_clientBuffer.clear ();
+	m_outputBuffer.clear ();
 	sLog.out ("IPCServer: client connected");
 }
 
@@ -88,7 +103,14 @@ void IPCServer::readClient () {
 		return;
 	}
 
-	m_clientBuffer.append (buf, n);
+	const auto received = static_cast<size_t> (n);
+	if (m_clientBuffer.size () > MAX_CLIENT_INPUT ||
+	    received > MAX_CLIENT_INPUT - m_clientBuffer.size ()) {
+		sLog.error ("IPCServer: client input exceeded ", MAX_CLIENT_INPUT, " bytes; closing client");
+		closeClient ();
+		return;
+	}
+	m_clientBuffer.append (buf, received);
 
 	// Drain complete lines from the buffer.
 	size_t pos;
@@ -171,7 +193,9 @@ void IPCServer::handleLine (const std::string& line) {
 }
 
 void IPCServer::handleRequest (uint64_t id, const std::string& cmd, const std::string& rest) {
-	if (cmd == "sample_pixel") {
+	if (cmd == "ping") {
+		writeResponse (id, true, "pong");
+	} else if (cmd == "sample_pixel") {
 		std::istringstream iss (rest);
 		int x, y;
 		if (!(iss >> x >> y)) {
@@ -241,13 +265,32 @@ void IPCServer::emitEvent (const std::string& type, const std::string& data) {
 
 void IPCServer::writeLine (const std::string& line) {
 	if (m_clientFd < 0) return;
-	const ssize_t n = ::write (m_clientFd, line.data (), line.size ());
-	if (n < 0) {
-		if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EPIPE) {
-			sLog.error ("IPCServer: write failed: ", strerror (errno));
+	if (m_outputBuffer.size () > MAX_QUEUED_OUTPUT ||
+	    line.size () > MAX_QUEUED_OUTPUT - m_outputBuffer.size ()) {
+		sLog.error ("IPCServer: queued output exceeded ", MAX_QUEUED_OUTPUT, " bytes; closing client");
+		closeClient ();
+		return;
+	}
+	m_outputBuffer.append (line);
+}
+
+void IPCServer::flushOutput () {
+	while (m_clientFd >= 0 && !m_outputBuffer.empty ()) {
+		const ssize_t n = send (m_clientFd, m_outputBuffer.data (), m_outputBuffer.size (), MSG_NOSIGNAL);
+		if (n > 0) {
+			m_outputBuffer.erase (0, static_cast<size_t> (n));
+			continue;
 		}
-		// EPIPE / any error: client is gone; drop it so accept reopens.
-		if (errno == EPIPE) closeClient ();
+		if (n == 0) {
+			sLog.error ("IPCServer: send() returned zero; closing client");
+			closeClient ();
+			return;
+		}
+		if (errno == EINTR) continue;
+		if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+		sLog.error ("IPCServer: send() failed: ", strerror (errno));
+		closeClient ();
+		return;
 	}
 }
 
@@ -256,6 +299,7 @@ void IPCServer::closeClient () {
 		close (m_clientFd);
 		m_clientFd = -1;
 		m_clientBuffer.clear ();
+		m_outputBuffer.clear ();
 		sLog.out ("IPCServer: client disconnected");
 	}
 }

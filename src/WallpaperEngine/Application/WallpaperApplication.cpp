@@ -1182,7 +1182,9 @@ void WallpaperApplication::setup () {
 
     if (!this->m_context.settings.general.ipcSocketPath.empty ()) {
 	this->m_ipcServer = std::make_unique<IPCServer> (
-	    this->m_context.settings.general.ipcSocketPath, *this
+	    this->m_context.settings.general.ipcSocketPath,
+	    this->m_context.settings.general.ipcOwnerCleans,
+	    *this
 	);
     }
 

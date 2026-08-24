@@ -128,6 +128,9 @@ public:
 	    std::vector<SpanGroup> spanGroups;
 	    /** Unix socket path for runtime IPC control. Empty = disabled. */
 	    std::string ipcSocketPath;
+	    /** Leave IPC socket pathname cleanup to the spawning owner. The default
+	     *  false preserves legacy pre-bind and destructor unlink behavior. */
+	    bool ipcOwnerCleans = false;
 	    /** When true, render pixels are written to a shared-memory file
 	     *  each frame (via glReadPixels) and the path is emitted over IPC
 	     *  as an !shm event. Enables external compositing by the host app
@@ -242,6 +245,7 @@ public:
             .defaultPlaylist = std::nullopt,
             .spanGroups = {},
             .ipcSocketPath = "",
+            .ipcOwnerCleans = false,
             .backgroundMode = {},
         },
         .render = {
