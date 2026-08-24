@@ -35,6 +35,9 @@ public:
     [[nodiscard]] int getHeight () const override { return this->m_height; }
 
     void setSize (int width, int height);
+    /** CEF lifecycle callback: release the owning browser reference before
+     *  OnBeforeClose returns, as required by CefLifeSpanHandler. */
+    void browserClosed (int identifier);
 
 protected:
     void renderFrame (const glm::ivec4& viewport) override;
@@ -46,6 +49,7 @@ protected:
 private:
     WallpaperEngine::WebBrowser::WebBrowserContext& m_browserContext;
     CefRefPtr<CefBrowser> m_browser = nullptr;
+    int m_browserIdentifier = -1;
     CefRefPtr<WallpaperEngine::WebBrowser::CEF::BrowserClient> m_client = nullptr;
     WallpaperEngine::WebBrowser::CEF::RenderHandler* m_renderHandler = nullptr;
 

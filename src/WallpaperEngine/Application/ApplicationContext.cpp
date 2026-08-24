@@ -5,14 +5,20 @@
 #include "WallpaperEngine/Logging/Log.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <argparse/argparse.hpp>
 
@@ -341,6 +347,19 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.action ([this] (const std::string&) -> void {
 	    this->settings.general.ipcOwnerCleans = true;
 	});
+    backgroundGroup.add_argument ("--cef-cache-path")
+	.help ("Use this absolute caller-owned directory as CEF's root cache. LWE "
+	       "never recursively removes a caller-provided path; the spawning owner "
+	       "must clean it after every CEF process is dead.")
+	.default_value (std::string (""))
+	.action ([this] (const std::string& value) -> void {
+	    if (value.empty ()) return;
+	    const std::filesystem::path path { value };
+	    if (!path.is_absolute ()) {
+		sLog.exception ("--cef-cache-path must be absolute");
+	    }
+	    this->settings.general.cefCachePath = path.lexically_normal ();
+	});
     backgroundMode.add_argument ("--hide-window")
     	.help ("Create the render window but never show it. Rendering and "
     	       "--shm-output are unaffected -- the GL context and backbuffer "
@@ -360,6 +379,47 @@ void ApplicationContext::loadSettingsFromArgv () {
 	.flag ()
 	.action ([this] (const std::string&) -> void {
 	    this->settings.general.shmOutput = true;
+	});
+    backgroundGroup.add_argument ("--shm-output-fd")
+	.help ("Write rendered frames to this inherited caller-created regular-file "
+	       "descriptor instead of a POSIX SHM object. LWE validates the descriptor, "
+	       "marks it CLOEXEC before CEF starts, and never unlinks its backing file.")
+	.default_value (std::string (""))
+	.action ([this] (const std::string& value) -> void {
+	    if (value.empty ()) return;
+	    // CEF re-execs this binary with the original argv after CLOEXEC has
+	    // intentionally closed the frame descriptor. Only the browser process
+	    // may validate and consume owner-provided frame authority.
+	    for (int index = 1; index < this->m_argc; index++) {
+		if (std::string_view (this->m_argv[index]).starts_with ("--type=")) return;
+	    }
+	    std::size_t consumed = 0;
+	    long long parsed = -1;
+	    try {
+		parsed = std::stoll (value, &consumed, 10);
+	    } catch (const std::exception&) {
+		sLog.exception ("--shm-output-fd must be an integer descriptor >= 3");
+	    }
+	    if (consumed != value.size () || parsed < 3 || parsed > std::numeric_limits<int>::max ()) {
+		sLog.exception ("--shm-output-fd must be an integer descriptor >= 3");
+	    }
+	    const int descriptor = static_cast<int> (parsed);
+	    const int descriptorFlags = fcntl (descriptor, F_GETFD);
+	    const int statusFlags = fcntl (descriptor, F_GETFL);
+	    struct stat identity {};
+	    if (descriptorFlags < 0
+		|| statusFlags < 0
+		|| (statusFlags & O_ACCMODE) != O_RDWR
+		|| fstat (descriptor, &identity) < 0
+		|| !S_ISREG (identity.st_mode)
+		|| identity.st_uid != geteuid ()
+		|| identity.st_nlink != 1
+		|| (identity.st_mode & 0777) != 0600
+		|| fcntl (descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) < 0) {
+		sLog.exception ("--shm-output-fd must name an inherited read-write, same-UID, mode-0600, single-link regular file");
+	    }
+	    this->settings.general.shmOutput = true;
+	    this->settings.general.shmOutputFd = descriptor;
 	});
     backgroundMode.add_argument ("--background-mode")
 	.help ("How to paint the area outside the wallpaper under fit scaling. "

@@ -131,11 +131,22 @@ public:
 	    /** Leave IPC socket pathname cleanup to the spawning owner. The default
 	     *  false preserves legacy pre-bind and destructor unlink behavior. */
 	    bool ipcOwnerCleans = false;
+	    /** Optional caller-owned absolute CEF root-cache path. Empty preserves
+	     *  the legacy generated temporary path. Caller-provided paths are never
+	     *  recursively removed by LWE. */
+	    std::filesystem::path cefCachePath;
 	    /** When true, render pixels are written to a shared-memory file
 	     *  each frame (via glReadPixels) and the path is emitted over IPC
 	     *  as an !shm event. Enables external compositing by the host app
 	     *  without DMA-BUF/EGL dependencies. */
 	    bool shmOutput = false;
+	    /** Optional caller-created regular-file descriptor for frame output.
+	     *  Negative preserves the legacy POSIX SHM object. The launcher keeps
+	     *  this descriptor open across exec; argument parsing validates it and
+	     *  marks it CLOEXEC before any CEF subprocess can launch. */
+	    int shmOutputFd = -1;
+	    /** Read end of main's nonblocking signal self-pipe. Internal only. */
+	    int stopSignalFd = -1;
 	    /** When set, the window is created but never shown (GLFW already
 	     *  creates it with GLFW_VISIBLE=FALSE; we simply skip showWindow()).
 	     *  Rendering and glReadnPixels are unaffected because the GL context

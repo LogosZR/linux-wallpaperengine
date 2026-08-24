@@ -26,10 +26,14 @@ public:
 private:
     void repositionWindow () const;
     void setupShm ();
+    void cleanupShmBacking ();
 
     std::string m_shmPath;
     void* m_shmBuffer = nullptr;
     uint32_t m_shmSize = 0;
     int m_shmFd = -1;
+    bool m_shmIsPosix = true;
+    bool m_shmOwnerCleans = false;
+    bool m_shmBackingCreated = false;
 };
 } // namespace WallpaperEngine::Render::Drivers::Output

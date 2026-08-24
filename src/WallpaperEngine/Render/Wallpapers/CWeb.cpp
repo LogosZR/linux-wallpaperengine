@@ -6,6 +6,11 @@
 
 #include "WallpaperEngine/Data/Model/Project.h"
 #include "WallpaperEngine/Data/Model/Wallpaper.h"
+#include "WallpaperEngine/Logging/Log.h"
+
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 
 using namespace WallpaperEngine::Render;
 using namespace WallpaperEngine::Render::Wallpapers;
@@ -29,12 +34,20 @@ CWeb::CWeb (
     // documentaion says that 60 fps is maximum value
     browserSettings.windowless_frame_rate = std::max (60, context.getApp ().getContext ().settings.render.maximumFPS);
 
-    this->m_client = new WebBrowser::CEF::BrowserClient (m_renderHandler);
+    this->m_client = new WebBrowser::CEF::BrowserClient (m_renderHandler, this);
     // use the custom scheme for the wallpaper's files
     const std::string htmlURL = WPSchemeHandlerFactory::generateSchemeName (this->getWeb ().project.workshopId)
 	+ "://root/" + this->getWeb ().filename;
     this->m_browser
 	= CefBrowserHost::CreateBrowserSync (window_info, this->m_client, htmlURL, browserSettings, nullptr, nullptr);
+    if (!this->m_browser) sLog.exception ("Failed to create CEF browser");
+    this->m_browserIdentifier = this->m_browser->GetIdentifier ();
+}
+
+void CWeb::browserClosed (const int identifier) {
+    if (identifier != this->m_browserIdentifier) return;
+    this->m_browser = nullptr;
+    this->m_browserIdentifier = -1;
 }
 
 void CWeb::setSize (const int width, const int height) {
@@ -53,7 +66,7 @@ void CWeb::setSize (const int width, const int height) {
     );
 
     // Notify cef that it was resized(maybe it's not even needed)
-    this->m_browser->GetHost ()->WasResized ();
+    if (this->m_browser) this->m_browser->GetHost ()->WasResized ();
 }
 
 void CWeb::renderFrame (const glm::ivec4& viewport) {
@@ -63,7 +76,7 @@ void CWeb::renderFrame (const glm::ivec4& viewport) {
     }
 
     // ensure the virtual mouse position is up to date
-    this->updateMouse (viewport);
+    if (this->m_browser) this->updateMouse (viewport);
     // use the scene's framebuffer by default
     glBindFramebuffer (GL_FRAMEBUFFER, this->getWallpaperFramebuffer ());
     // ensure we render over the whole framebuffer
@@ -81,6 +94,8 @@ void CWeb::renderFrame (const glm::ivec4& viewport) {
 }
 
 void CWeb::updateMouse (const glm::ivec4& viewport) {
+    if (!this->m_browser) return;
+
     // update virtual mouse position first
     auto& input = this->getContext ().getInputContext ().getMouseInput ();
 
@@ -116,8 +131,25 @@ void CWeb::updateMouse (const glm::ivec4& viewport) {
 }
 
 CWeb::~CWeb () {
-    CefDoMessageLoopWork ();
-    this->m_browser->GetHost ()->CloseBrowser (true);
+    if (this->m_browser && this->m_client) {
+	this->m_browser->GetHost ()->CloseBrowser (true);
+	// CEF owns its browser reference until OnBeforeClose. Release ours before
+	// pumping so shutdown observes the actual CEF lifetime.
+	this->m_browser = nullptr;
+	const auto deadline = std::chrono::steady_clock::now () + std::chrono::seconds (5);
+	while (!this->m_client->allClosed () && std::chrono::steady_clock::now () < deadline) {
+	    CefDoMessageLoopWork ();
+	    std::this_thread::sleep_for (std::chrono::milliseconds (1));
+	}
+	if (!this->m_client->allClosed ()) {
+	    sLog.error ("CEF browser did not close before shutdown; aborting to avoid unsafe teardown");
+	    std::abort ();
+	}
+    }
 
-    delete this->m_renderHandler;
+    this->m_browser = nullptr;
+    this->m_client = nullptr;
+    // m_client owns the ref-counted render handler. This raw member is only an
+    // observer used while the browser is alive and must never be deleted here.
+    this->m_renderHandler = nullptr;
 }

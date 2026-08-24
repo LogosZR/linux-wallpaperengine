@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 
 #include <unistd.h>
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -64,8 +65,22 @@ GLFWWindowOutput::~GLFWWindowOutput () {
     }
     if (this->m_shmFd >= 0) {
 	close (this->m_shmFd);
-	shm_unlink (this->m_shmPath.c_str ());
+	this->m_shmFd = -1;
     }
+    this->cleanupShmBacking ();
+}
+
+void GLFWWindowOutput::cleanupShmBacking () {
+    if (!this->m_shmBackingCreated || this->m_shmOwnerCleans || this->m_shmPath.empty ()) return;
+
+    const int result = this->m_shmIsPosix
+	? shm_unlink (this->m_shmPath.c_str ())
+	: unlink (this->m_shmPath.c_str ());
+    if (result < 0 && errno != ENOENT) {
+	sLog.error ("Failed to remove frame-output backing ", this->m_shmPath, ": ", strerror (errno));
+	return;
+    }
+    this->m_shmBackingCreated = false;
 }
 
 void GLFWWindowOutput::setupShm () {
@@ -75,28 +90,41 @@ void GLFWWindowOutput::setupShm () {
     const uint32_t headerSize = 16;
     this->m_shmSize = headerSize + this->m_fullWidth * this->m_fullHeight * 4;
 
-    // Use the IPC socket path as the basis for the shm name so it's unique
-    // per lwe instance and correlates with the owning session.
-    this->m_shmPath = "/kuro-wpe-" + std::to_string (getpid ());
+    const int inheritedFd = this->m_context.settings.general.shmOutputFd;
+    this->m_shmOwnerCleans = inheritedFd >= 0;
+    this->m_shmIsPosix = !this->m_shmOwnerCleans;
 
-    this->m_shmFd = shm_open (this->m_shmPath.c_str (), O_CREAT | O_RDWR, 0600);
-    if (this->m_shmFd < 0) {
-	sLog.error ("shm_open failed: ", strerror (errno));
-	return;
+    if (this->m_shmIsPosix) {
+	this->m_shmPath = "/kuro-wpe-" + std::to_string (getpid ());
+	this->m_shmFd = shm_open (this->m_shmPath.c_str (), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+	if (this->m_shmFd >= 0) this->m_shmBackingCreated = true;
+    } else {
+	// Argument parsing already validated this descriptor and marked it
+	// CLOEXEC before CEF initialization. Transfer its ownership to the output.
+	this->m_shmFd = inheritedFd;
+	this->m_context.settings.general.shmOutputFd = -1;
     }
+    if (this->m_shmFd < 0) {
+	const int error = errno;
+	this->cleanupShmBacking ();
+	sLog.exception ("frame-output backing acquisition failed: ", strerror (error));
+    }
+
     if (ftruncate (this->m_shmFd, this->m_shmSize) < 0) {
-	sLog.error ("ftruncate shm failed: ", strerror (errno));
+	const int error = errno;
 	close (this->m_shmFd);
 	this->m_shmFd = -1;
-	return;
+	this->cleanupShmBacking ();
+	sLog.exception ("ftruncate frame-output backing failed: ", strerror (error));
     }
     this->m_shmBuffer = mmap (nullptr, this->m_shmSize, PROT_READ | PROT_WRITE, MAP_SHARED, this->m_shmFd, 0);
     if (this->m_shmBuffer == MAP_FAILED) {
-	sLog.error ("mmap shm failed: ", strerror (errno));
+	const int error = errno;
 	this->m_shmBuffer = nullptr;
 	close (this->m_shmFd);
 	this->m_shmFd = -1;
-	return;
+	this->cleanupShmBacking ();
+	sLog.exception ("mmap frame-output backing failed: ", strerror (error));
     }
 
     // Write the header with initial dimensions. Frame counter starts at 0.

@@ -73,15 +73,24 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
 	exit (exit_code);
     }
 
-    // Configurate Chromium
+    // Configure Chromium. A caller-provided path is owner-managed so the
+    // process supervisor can publish it before launch and clean it only after
+    // every CEF descendant is dead. Legacy callers retain a generated path,
+    // which LWE removes after a normal CefShutdown.
     CefSettings settings;
-    std::string cache_path = (std::filesystem::temp_directory_path () / uuid::generate_uuid_v4 ()).string ();
+    const auto& configuredCachePath
+	= this->m_wallpaperApplication.getContext ().settings.general.cefCachePath;
+    this->m_cacheOwnedByCaller = !configuredCachePath.empty ();
+    this->m_cachePath = this->m_cacheOwnedByCaller
+	? configuredCachePath
+	: std::filesystem::temp_directory_path () / uuid::generate_uuid_v4 ();
+    const std::string cachePath = this->m_cachePath.string ();
     // CefString(&settings.locales_dir_path) = "OffScreenCEF/godot/locales";
     // CefString(&settings.resources_dir_path) = "OffScreenCEF/godot/";
     // CefString(&settings.framework_dir_path) = "OffScreenCEF/godot/";
     // CefString(&settings.cache_path) = "OffScreenCEF/godot/";
     //  CefString(&settings.browser_subprocess_path) = "path/to/client"
-    cef_string_utf8_to_utf16 (cache_path.c_str (), cache_path.length (), &settings.root_cache_path);
+    cef_string_utf8_to_utf16 (cachePath.c_str (), cachePath.length (), &settings.root_cache_path);
     settings.windowless_rendering_enabled = true;
 #if defined(CEF_NO_SANDBOX)
     settings.no_sandbox = true;
@@ -90,6 +99,10 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
     // spawns two new processess
 
     if (!CefInitialize (main_args, settings, this->m_browserApplication, nullptr)) {
+	if (!this->m_cacheOwnedByCaller) {
+	    std::error_code error;
+	    std::filesystem::remove_all (this->m_cachePath, error);
+	}
 	sLog.exception ("CefInitialize: failed");
     }
 }
@@ -97,4 +110,12 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
 WebBrowserContext::~WebBrowserContext () {
     sLog.out ("Shutting down CEF");
     CefShutdown ();
+
+    if (!this->m_cacheOwnedByCaller && !this->m_cachePath.empty ()) {
+	std::error_code error;
+	std::filesystem::remove_all (this->m_cachePath, error);
+	if (error) {
+	    sLog.error ("Failed to remove generated CEF cache path ", this->m_cachePath.string (), ": ", error.message ());
+	}
+    }
 }

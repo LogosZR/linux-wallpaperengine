@@ -22,5 +22,7 @@ private:
     CefRefPtr<CefApp> m_browserApplication = nullptr;
     CefRefPtr<CefCommandLine> m_commandLine = nullptr;
     WallpaperEngine::Application::WallpaperApplication& m_wallpaperApplication;
+    std::filesystem::path m_cachePath;
+    bool m_cacheOwnedByCaller = false;
 };
 } // namespace WallpaperEngine::WebBrowser

@@ -79,7 +79,14 @@ void WallpaperApplication::initializeSubsystems () {
     // initialize player dbus (update every 2 seconds)
     m_mediaSource = std::make_unique<WallpaperEngine::Media::DBusMediaSource> (std::chrono::milliseconds (2000));
 }
-WallpaperApplication::~WallpaperApplication () = default;
+WallpaperApplication::~WallpaperApplication () {
+    // RenderContext owns CWeb instances. Destroy them and finish each CEF
+    // browser close while the CEF process context is still alive; CefShutdown
+    // must be the final CEF operation.
+    this->m_ipcServer.reset ();
+    this->m_renderContext.reset ();
+    this->m_browserContext.reset ();
+}
 
 AssetLocatorUniquePtr WallpaperApplication::setupAssetLocator (const std::string& bg) const {
     auto container = std::make_unique<Container> ();
@@ -1329,7 +1336,7 @@ void WallpaperApplication::show () {
     // the shm buffer) is initialized inside setup().
     if (this->m_ipcServer && this->m_context.settings.general.shmOutput) {
 	auto* glOut = dynamic_cast<Render::Drivers::Output::GLFWWindowOutput*> (this->m_videoDriver->getOutputPtr ());
-	if (glOut && glOut->shmActive ()) {
+	if (glOut && glOut->shmActive () && !glOut->shmPath ().empty ()) {
 	    this->m_ipcServer->emitEvent (
 		"shm",
 		glOut->shmPath () + " " +
@@ -1340,11 +1347,18 @@ void WallpaperApplication::show () {
     }
 
     while (this->m_context.state.general.keepRunning) {
-		if (this->m_ipcServer) this->m_ipcServer->poll ();
-		this->pollEyedropper ();
-		this->pollClickForFocus ();
-		this->pollKeyboardForwarding ();
-		render();
+	if (this->m_context.settings.general.stopSignalFd >= 0) {
+	    unsigned char signalValue = 0;
+	    while (read (this->m_context.settings.general.stopSignalFd, &signalValue, sizeof (signalValue)) == 1) {
+		this->signal (signalValue);
+	    }
+	    if (!this->m_context.state.general.keepRunning) break;
+	}
+	if (this->m_ipcServer) this->m_ipcServer->poll ();
+	this->pollEyedropper ();
+	this->pollClickForFocus ();
+	this->pollKeyboardForwarding ();
+	render ();
     }
     cleanup ();
 }
