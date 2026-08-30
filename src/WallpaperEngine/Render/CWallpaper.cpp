@@ -332,7 +332,7 @@ void CWallpaper::render (
     // non-default background mode is active, so the default framebuffer's
     // pre-painted background (e.g. cleared to --background-mode color) shows
     // through instead of the opaque edge-clamped scene pixel.
-    glUniform1i (this->g_DiscardOutside, bgMode.kind != Application::ApplicationContext::BackgroundMode::None);
+    glUniform1i (this->g_DiscardOutside, bgMode.kind != Application::ApplicationContext::BackgroundMode::Disabled);
     // write the framebuffer as is to the screen
     glBindBuffer (GL_ARRAY_BUFFER, this->m_texCoordBuffer);
     glDrawArrays (GL_TRIANGLES, 0, 6);

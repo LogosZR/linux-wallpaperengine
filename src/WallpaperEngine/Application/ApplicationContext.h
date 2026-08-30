@@ -80,8 +80,10 @@ public:
      * field for the accepted syntax.
      */
     struct BackgroundMode {
-	enum Kind { None, Color, ColorScheme, Blur };
-	Kind kind = None;
+	// X11 defines `None` as a macro. Avoid leaking that platform macro into
+	// this cross-platform application setting.
+	enum Kind { Disabled, Color, ColorScheme, Blur };
+	Kind kind = Disabled;
 	/** Only used when kind == Color. RGB in [0,1]. */
 	glm::vec3 color = { 0.0f, 0.0f, 0.0f };
 

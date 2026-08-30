@@ -32,7 +32,7 @@ std::optional<ApplicationContext::BackgroundMode> ApplicationContext::Background
     const std::string& value
 ) {
     if (value == "none") {
-	return BackgroundMode { .kind = None };
+	return BackgroundMode { .kind = Disabled };
     }
     if (value == "blur") {
 	return BackgroundMode { .kind = Blur };
