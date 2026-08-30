@@ -778,6 +778,7 @@ void CImage::setup () {
     CRenderable::setup ();
 
     this->setupPasses ();
+    this->m_visibleDuringPassSetup = this->getImage ().visible->value->getBool ();
     this->m_initialized = true;
 }
 
@@ -912,7 +913,17 @@ void CImage::render () {
 	return;
     }
 
-    if (!this->getImage ().visible->value->getBool ()) {
+    const bool visible = this->getImage ().visible->value->getBool ();
+    if (visible != this->m_visibleDuringPassSetup) {
+	// The last pass targets the scene FBO only while the image is visible.
+	// A conditional user property can change visibility after setup(), so
+	// rebuild the pass wiring before this frame rather than rendering into
+	// the image's private composite FBO forever.
+	this->setupPasses ();
+	this->m_visibleDuringPassSetup = visible;
+    }
+
+    if (!visible) {
 	return;
     }
 

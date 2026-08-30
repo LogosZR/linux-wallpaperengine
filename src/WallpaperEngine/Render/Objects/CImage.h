@@ -129,6 +129,10 @@ private:
     glm::vec2 m_size = {};
 
     bool m_initialized = false;
+    // setupPasses chooses whether the final pass targets the scene FBO based
+    // on visibility. Track that state so a condition/user property transition
+    // can rewire the passes before the image is rendered again.
+    bool m_visibleDuringPassSetup = false;
 
     struct {
 	struct {
